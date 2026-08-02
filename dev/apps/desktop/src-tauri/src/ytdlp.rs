@@ -259,9 +259,10 @@ pub fn download(req: DownloadRequest) -> Result<Child, String> {
 
     let mut command = Command::new(&ytdlp);
     apply_common_args(&mut command, req.cookies_browser, req.cookies_file);
+    let (_mode, bare_format) = crate::paths::decode_format_id(req.format_id);
     command
         .arg("-f")
-        .arg(req.format_id)
+        .arg(bare_format)
         .arg("-o")
         .arg(req.output_template)
         .arg("--newline")
@@ -406,7 +407,11 @@ fn curate_formats(raw: &[RawFormat]) -> Vec<VideoFormat> {
                     }
                 }
                 with_sound.push(VideoFormat {
-                    format_id: format!("{}+{}", v.format_id, audio.format_id),
+                    format_id: crate::paths::encode_format_id(
+                        &format!("{}+{}", v.format_id, audio.format_id),
+                        true,
+                        true,
+                    ),
                     label: match v.height {
                         Some(h) => format!("{h}p {}+audio", v.ext),
                         None => format!("{}+audio", v.ext),
@@ -432,7 +437,7 @@ fn curate_formats(raw: &[RawFormat]) -> Vec<VideoFormat> {
                 None => ("bv*+ba/b".to_string(), "Meilleure qualité avec son".to_string()),
             };
             with_sound.push(VideoFormat {
-                format_id,
+                format_id: crate::paths::encode_format_id(&format_id, true, true),
                 label,
                 ext: "mp4".to_string(),
                 height: v.height,
@@ -444,7 +449,7 @@ fn curate_formats(raw: &[RawFormat]) -> Vec<VideoFormat> {
 
     if with_sound.is_empty() {
         with_sound.push(VideoFormat {
-            format_id: "bv*+ba/b".to_string(),
+            format_id: crate::paths::encode_format_id("bv*+ba/b", true, true),
             label: "Meilleure qualité avec son".to_string(),
             ext: "mp4".to_string(),
             height: None,
@@ -459,7 +464,7 @@ fn curate_formats(raw: &[RawFormat]) -> Vec<VideoFormat> {
         out.push(to_video_format(audio, true));
     } else {
         out.push(VideoFormat {
-            format_id: "ba/b".to_string(),
+            format_id: crate::paths::encode_format_id("ba/b", false, true),
             label: "Meilleur audio seul".to_string(),
             ext: "m4a".to_string(),
             height: None,
@@ -504,7 +509,7 @@ fn to_video_format(f: &RawFormat, prefer_audio_label: bool) -> VideoFormat {
     };
 
     VideoFormat {
-        format_id: f.format_id.clone(),
+        format_id: crate::paths::encode_format_id(&f.format_id, f.has_video, f.has_audio),
         label,
         ext: f.ext.clone(),
         height: f.height,

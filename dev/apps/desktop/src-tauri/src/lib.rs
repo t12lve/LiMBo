@@ -73,7 +73,7 @@ fn enqueue_urls(
     urls: Vec<String>,
     format_id: Option<String>,
 ) -> Result<usize, String> {
-    let format = format_id.unwrap_or_else(|| "bv*+ba/b".to_string());
+    let format = encode_batch_format_id(&format_id.unwrap_or_else(|| "bv*+ba/b".to_string()));
     let mut count = 0usize;
     for raw in urls {
         let url = raw.trim().to_string();
@@ -143,13 +143,26 @@ fn update_prefs(state: State<ConfigState>, prefs: PrefsUpdate) -> Result<AppConf
 }
 
 fn caps_from_format_id(format_id: &str) -> Option<(bool, bool)> {
-    // Reuse path heuristics: (has_video, has_audio).
+    // Prefer limbo: mode prefix, then path heuristics.
     let mode = paths::download_mode(format_id, false, None);
     match mode.as_str() {
         "son" => Some((false, true)),
         "video" => Some((true, false)),
         "combo" => Some((true, true)),
         _ => None,
+    }
+}
+
+/// Encode batch selectors so filenames get the right mode suffix.
+fn encode_batch_format_id(format_id: &str) -> String {
+    let (hint, bare) = paths::decode_format_id(format_id);
+    if hint.is_some() {
+        return format_id.to_string();
+    }
+    match paths::download_mode(bare, false, None).as_str() {
+        "son" => paths::encode_format_id(bare, false, true),
+        "video" => paths::encode_format_id(bare, true, false),
+        _ => paths::encode_format_id(bare, true, true),
     }
 }
 

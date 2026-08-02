@@ -156,6 +156,16 @@ impl JobRunner {
         cookies: Option<String>,
         caps: Option<(bool, bool)>,
     ) -> String {
+        let format_id = normalize_job_format_id(format_id, caps);
+        let caps = caps.or_else(|| {
+            let mode = crate::paths::download_mode(&format_id, false, None);
+            match mode.as_str() {
+                "son" => Some((false, true)),
+                "video" => Some((true, false)),
+                "combo" => Some((true, true)),
+                _ => None,
+            }
+        });
         let id = uuid::Uuid::new_v4().to_string();
         let snapshot = JobSnapshot {
             id: id.clone(),
@@ -608,4 +618,15 @@ fn cleanup_partial_files(job_dir: &str) {
             let _ = std::fs::remove_file(&path);
         }
     }
+}
+
+fn normalize_job_format_id(format_id: String, caps: Option<(bool, bool)>) -> String {
+    let (hint, bare) = crate::paths::decode_format_id(&format_id);
+    if hint.is_some() {
+        return format_id;
+    }
+    if let Some((has_video, has_audio)) = caps {
+        return crate::paths::encode_format_id(bare, has_video, has_audio);
+    }
+    format_id
 }

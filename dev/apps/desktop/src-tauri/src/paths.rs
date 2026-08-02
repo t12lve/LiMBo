@@ -45,6 +45,40 @@ pub fn normalize_platform(extractor: &str) -> String {
     }
 }
 
+/// Prefix curated format ids so naming stays correct even when clients omit hasAudio/hasVideo.
+/// Example: `limbo:video:299` → yt-dlp gets `299`, filename mode is `video`.
+const FORMAT_PREFIX: &str = "limbo:";
+
+pub fn encode_format_id(raw_id: &str, has_video: bool, has_audio: bool) -> String {
+    let mode = match (has_video, has_audio) {
+        (true, true) => "combo",
+        (false, true) => "son",
+        (true, false) => "video",
+        (false, false) => "combo",
+    };
+    format!("{FORMAT_PREFIX}{mode}:{raw_id}")
+}
+
+/// Returns `(mode_hint, yt_dlp_format_id)`.
+pub fn decode_format_id(format_id: &str) -> (Option<&'static str>, &str) {
+    let Some(rest) = format_id.strip_prefix(FORMAT_PREFIX) else {
+        return (None, format_id);
+    };
+    let Some((mode, raw)) = rest.split_once(':') else {
+        return (None, format_id);
+    };
+    let hint = match mode {
+        "son" => Some("son"),
+        "video" => Some("video"),
+        "combo" => Some("combo"),
+        _ => None,
+    };
+    if raw.is_empty() {
+        return (None, format_id);
+    }
+    (hint, raw)
+}
+
 /// Derive download mode label from caps and/or format selector + trim flag.
 /// Prefer explicit `(has_video, has_audio)` when known (curated formats use numeric ids).
 pub fn download_mode(
@@ -52,15 +86,19 @@ pub fn download_mode(
     trimmed: bool,
     caps: Option<(bool /* has_video */, bool /* has_audio */)>,
 ) -> String {
-    let base = if let Some((has_video, has_audio)) = caps {
+    let (prefix_mode, bare_id) = decode_format_id(format_id);
+
+    let base = if let Some(mode) = prefix_mode {
+        mode
+    } else if let Some((has_video, has_audio)) = caps {
         match (has_video, has_audio) {
             (true, true) => "combo",
             (false, true) => "son",
             (true, false) => "video",
-            (false, false) => infer_mode_from_format_id(format_id),
+            (false, false) => infer_mode_from_format_id(bare_id),
         }
     } else {
-        infer_mode_from_format_id(format_id)
+        infer_mode_from_format_id(bare_id)
     };
     if trimmed {
         format!("{base}_trimmed")
@@ -145,10 +183,23 @@ mod tests {
     use super::*;
 
     #[test]
-    fn mode_audio_only() {
-        assert_eq!(download_mode("ba/b", false, None), "son");
-        assert_eq!(download_mode("bestaudio", false, None), "son");
-        assert_eq!(download_mode("251", false, Some((false, true))), "son");
+    fn mode_from_prefixed_format_id() {
+        assert_eq!(download_mode("limbo:video:299", false, None), "video");
+        assert_eq!(download_mode("limbo:son:251", false, None), "son");
+        assert_eq!(download_mode("limbo:combo:137+140", false, None), "combo");
+    }
+
+    #[test]
+    fn decode_strips_prefix() {
+        assert_eq!(decode_format_id("limbo:video:299"), (Some("video"), "299"));
+        assert_eq!(decode_format_id("ba/b"), (None, "ba/b"));
+    }
+
+    #[test]
+    fn encode_roundtrip() {
+        let id = encode_format_id("299", true, false);
+        assert_eq!(id, "limbo:video:299");
+        assert_eq!(decode_format_id(&id), (Some("video"), "299"));
     }
 
     #[test]
