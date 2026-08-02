@@ -16,12 +16,17 @@ use std::sync::{Arc, Mutex};
 
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use tauri::{AppHandle, Emitter};
 use tokio::sync::Notify;
 
 use crate::config::AppConfig;
 use crate::progress_parse;
 use crate::ws_server::JobEventSender;
 use crate::ytdlp;
+
+/// Tauri event name emitted to the desktop frontend on every job mutation, mirroring the WS
+/// `job.*` broadcasts. Payload is a single [`JobSnapshot`].
+pub const JOB_UPDATED_EVENT: &str = "job-updated";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -76,12 +81,17 @@ pub struct JobRunner {
     events: JobEventSender,
     config: Arc<Mutex<AppConfig>>,
     notify: Notify,
+    app_handle: AppHandle,
 }
 
 impl JobRunner {
     /// Builds the runner and spawns its dispatcher loop on the current tokio runtime.
     /// Must be called from within a tokio runtime (e.g. Tauri's `setup` hook).
-    pub fn new(events: JobEventSender, config: Arc<Mutex<AppConfig>>) -> Arc<JobRunner> {
+    pub fn new(
+        events: JobEventSender,
+        config: Arc<Mutex<AppConfig>>,
+        app_handle: AppHandle,
+    ) -> Arc<JobRunner> {
         let runner = Arc::new(JobRunner {
             state: Mutex::new(RunnerState {
                 jobs: Vec::new(),
@@ -93,6 +103,7 @@ impl JobRunner {
             events,
             config,
             notify: Notify::new(),
+            app_handle,
         });
 
         let dispatcher = runner.clone();
@@ -135,6 +146,7 @@ impl JobRunner {
         }
 
         self.broadcast(json!({ "type": "job.created", "job": snapshot }));
+        self.emit_job_updated(&snapshot);
         self.notify.notify_one();
         id
     }
@@ -166,6 +178,11 @@ impl JobRunner {
         let _ = self.events.send(value.to_string());
     }
 
+    /// Mirrors WS `job.*` broadcasts to the native frontend as a single `job-updated` event.
+    fn emit_job_updated(&self, snapshot: &JobSnapshot) {
+        let _ = self.app_handle.emit(JOB_UPDATED_EVENT, snapshot);
+    }
+
     fn update_job<F: FnOnce(&mut JobSnapshot)>(&self, id: &str, f: F) -> Option<JobSnapshot> {
         let mut state = self.state.lock().unwrap();
         let job = state.jobs.iter_mut().find(|job| job.id == id)?;
@@ -179,6 +196,7 @@ impl JobRunner {
             job.error = Some(error.clone());
         }) {
             self.broadcast(json!({ "type": "job.error", "job": snapshot }));
+            self.emit_job_updated(&snapshot);
         }
     }
 
@@ -292,6 +310,7 @@ impl JobRunner {
                     job.percent = 100.0;
                 }) {
                     self.broadcast(json!({ "type": "job.done", "job": snapshot }));
+                    self.emit_job_updated(&snapshot);
                 }
             }
             Err(error) => self.finish_error(&id, error),
@@ -305,6 +324,7 @@ impl JobRunner {
     fn set_phase(&self, id: &str, phase: JobPhase) {
         if let Some(snapshot) = self.update_job(id, |job| job.phase = phase) {
             self.broadcast(job_progress_payload(&snapshot));
+            self.emit_job_updated(&snapshot);
         }
     }
 
@@ -395,6 +415,7 @@ impl JobRunner {
                 job.eta = eta;
             }) {
                 self.broadcast(job_progress_payload(&snapshot));
+                self.emit_job_updated(&snapshot);
             }
             return;
         }

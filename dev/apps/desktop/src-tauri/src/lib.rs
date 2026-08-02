@@ -8,6 +8,7 @@ use std::path::Path;
 use std::sync::{Arc, Mutex};
 
 use config::{AppConfig, ConfigState};
+use job_runner::JobRunner;
 use tauri::{Manager, State};
 
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
@@ -47,6 +48,18 @@ fn set_output_dir(state: State<ConfigState>, path: String) -> Result<(), String>
     Ok(())
 }
 
+/// Full snapshot of every job known this session, for the UI's initial render / reconnect.
+/// Live updates afterwards arrive via `job-updated` events (see [`job_runner::JOB_UPDATED_EVENT`]).
+#[tauri::command]
+fn get_jobs_snapshot(runner: State<Arc<JobRunner>>) -> Vec<job_runner::JobSnapshot> {
+    runner.snapshot()
+}
+
+#[tauri::command]
+fn cancel_job(runner: State<Arc<JobRunner>>, id: String) {
+    runner.cancel(&id);
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -57,7 +70,7 @@ pub fn run() {
             let token = config.token.clone();
             let config_state = Arc::new(Mutex::new(config));
             app.manage(ConfigState(config_state.clone()));
-            let runner = ws_server::spawn(token, config_state);
+            let runner = ws_server::spawn(token, config_state, app.handle().clone());
             app.manage(runner);
             Ok(())
         })
@@ -65,7 +78,9 @@ pub fn run() {
             greet,
             get_app_config,
             ensure_token,
-            set_output_dir
+            set_output_dir,
+            get_jobs_snapshot,
+            cancel_job
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

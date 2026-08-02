@@ -38,9 +38,13 @@ pub type JobEventSender = broadcast::Sender<String>;
 /// Spawns the WebSocket server on the current tokio runtime and returns the [`JobRunner`] used to
 /// queue downloads / cancellations and to publish job events to all authenticated clients.
 /// Intended to be called once from the Tauri `setup` hook, inside a tokio runtime.
-pub fn spawn(token: String, config: Arc<Mutex<AppConfig>>) -> Arc<JobRunner> {
+pub fn spawn(
+    token: String,
+    config: Arc<Mutex<AppConfig>>,
+    app_handle: tauri::AppHandle,
+) -> Arc<JobRunner> {
     let (job_tx, _keep_alive_rx) = broadcast::channel::<String>(64);
-    let runner = JobRunner::new(job_tx.clone(), config);
+    let runner = JobRunner::new(job_tx.clone(), config, app_handle);
     let accept_tx = job_tx;
     let accept_runner = runner.clone();
 
