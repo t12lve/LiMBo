@@ -1,8 +1,7 @@
 //! Mirrors `@limbo/shared`'s `parseYtDlpProgressLine` (`packages/shared/src/progress.ts`).
 //!
-//! Parses a single line of `yt-dlp --newline` stdout into `(percent, speed, eta)`.
-//! Not wired to the WebSocket server yet — the job runner (Task 7) will call this while
-//! streaming a download's stdout to turn lines into `job.progress` events.
+//! Parses a single line of `yt-dlp --newline` stdout into `(percent, speed, eta)`. Called by
+//! `job_runner`'s stdout reader to turn lines into `job.progress` events.
 
 use std::sync::LazyLock;
 
@@ -13,7 +12,6 @@ static PROGRESS_RE: LazyLock<Regex> = LazyLock::new(|| {
         .expect("progress regex is valid")
 });
 
-#[allow(dead_code)]
 pub fn parse_line(line: &str) -> Option<(f64, String, String)> {
     let caps = PROGRESS_RE.captures(line)?;
     let percent: f64 = caps.get(1)?.as_str().parse().ok()?;

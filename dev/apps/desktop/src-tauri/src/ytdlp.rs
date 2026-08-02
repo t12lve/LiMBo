@@ -7,7 +7,7 @@
 //! `prod/bin/` locally — the `.exe`s themselves are gitignored.
 
 use std::path::PathBuf;
-use std::process::Command;
+use std::process::{Child, Command, Stdio};
 
 use serde::Serialize;
 use serde_json::Value;
@@ -61,13 +61,121 @@ fn resolve_binary_path(name: &str) -> Result<PathBuf, String> {
     ))
 }
 
-fn run_hidden(command: &mut Command) -> std::io::Result<std::process::Output> {
+fn hide_window(command: &mut Command) {
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
         command.creation_flags(CREATE_NO_WINDOW);
     }
+}
+
+fn run_hidden(command: &mut Command) -> std::io::Result<std::process::Output> {
+    hide_window(command);
     command.output()
+}
+
+/// Runs a metadata-only query (`--skip-download`) to obtain a video's title and id without
+/// pulling the full `-J` JSON payload. Used by the job runner to fill in `JobSnapshot.title`
+/// and to name `.part` files for cleanup, since `download.create` only carries `url`/`formatId`.
+pub fn fetch_title_and_id(url: &str) -> Result<(String, String), String> {
+    let ytdlp = resolve_binary_path("yt-dlp.exe")?;
+
+    let output = run_hidden(Command::new(&ytdlp).args([
+        "--no-playlist",
+        "--skip-download",
+        "--print",
+        "%(title)s",
+        "--print",
+        "%(id)s",
+        url,
+    ]))
+    .map_err(|e| format!("failed to spawn yt-dlp: {e}"))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let trimmed = stderr.trim();
+        return Err(if trimmed.is_empty() {
+            format!("yt-dlp exited with {}", output.status)
+        } else {
+            format!("yt-dlp exited with {}: {trimmed}", output.status)
+        });
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let mut lines = stdout.lines();
+    let title = lines.next().unwrap_or("").trim().to_string();
+    let id = lines.next().unwrap_or("").trim().to_string();
+
+    if id.is_empty() {
+        return Err("yt-dlp did not return a video id".to_string());
+    }
+
+    Ok((if title.is_empty() { "Untitled".to_string() } else { title }, id))
+}
+
+fn seconds_to_timecode(sec: f64) -> String {
+    let total = sec.max(0.0).floor() as u64;
+    let hours = total / 3600;
+    let minutes = (total % 3600) / 60;
+    let seconds = total % 60;
+    format!("{hours:02}:{minutes:02}:{seconds:02}")
+}
+
+/// Parameters for [`download`]. Borrowed rather than owned since the caller (job runner) already
+/// holds the owned strings for the duration of the blocking call.
+pub struct DownloadRequest<'a> {
+    pub url: &'a str,
+    pub format_id: &'a str,
+    pub output_dir: &'a str,
+    /// `(startSec, endSec)`, forwarded to `yt-dlp --download-sections "*HH:MM:SS-HH:MM:SS"`.
+    pub trim: Option<(f64, f64)>,
+}
+
+/// Spawns `yt-dlp` to download `format_id` from `url` into `output_dir` (optionally trimmed),
+/// with stdout/stderr piped so the caller can stream `--newline` progress and capture failures.
+/// The caller owns the returned [`Child`]: it must read `stdout`, and either `wait()` it to
+/// completion or `kill()` it to cancel.
+pub fn download(req: DownloadRequest) -> Result<Child, String> {
+    let ytdlp = resolve_binary_path("yt-dlp.exe")?;
+    let ffmpeg = resolve_binary_path("ffmpeg.exe")?;
+    let ffmpeg_dir = ffmpeg
+        .parent()
+        .ok_or_else(|| "could not resolve ffmpeg.exe's parent directory".to_string())?;
+
+    let output_template = format!(
+        "{}/%(title)s [%(id)s].%(ext)s",
+        req.output_dir.trim_end_matches(['/', '\\'])
+    );
+
+    let mut command = Command::new(&ytdlp);
+    command
+        .arg("-f")
+        .arg(req.format_id)
+        .arg("--no-playlist")
+        .arg("-o")
+        .arg(&output_template)
+        .arg("--newline")
+        // Without this, yt-dlp silently skips (exit 0, no download) when a file already sits at
+        // the output path — e.g. re-downloading the same video/format with a different trim range
+        // would otherwise reuse the untrimmed file from a prior job instead of regenerating it.
+        .arg("--force-overwrites")
+        .arg("--ffmpeg-location")
+        .arg(ffmpeg_dir);
+
+    if let Some((start, end)) = req.trim {
+        command.arg("--download-sections").arg(format!(
+            "*{}-{}",
+            seconds_to_timecode(start),
+            seconds_to_timecode(end)
+        ));
+    }
+
+    command.arg(req.url);
+    command.stdout(Stdio::piped());
+    command.stderr(Stdio::piped());
+    hide_window(&mut command);
+
+    command.spawn().map_err(|e| format!("failed to spawn yt-dlp: {e}"))
 }
 
 /// Runs `yt-dlp -J --no-playlist <url>` and turns the resulting JSON into a `FormatsPayload`.

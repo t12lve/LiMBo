@@ -1,6 +1,6 @@
 use std::fs;
 use std::path::PathBuf;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use serde::{Deserialize, Serialize};
 
@@ -12,8 +12,9 @@ pub struct AppConfig {
     pub output_dir: Option<String>,
 }
 
-/// Shared, mutex-guarded config state managed by Tauri.
-pub struct ConfigState(pub Mutex<AppConfig>);
+/// Shared, mutex-guarded config state managed by Tauri. `Arc`-wrapped so the same instance can
+/// also be handed to [`crate::job_runner::JobRunner`], which reads `output_dir` per job.
+pub struct ConfigState(pub Arc<Mutex<AppConfig>>);
 
 fn config_dir() -> Result<PathBuf, String> {
     dirs::config_dir()

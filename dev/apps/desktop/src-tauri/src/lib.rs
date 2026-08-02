@@ -1,10 +1,11 @@
 mod config;
+mod job_runner;
 mod progress_parse;
 mod ws_server;
 mod ytdlp;
 
 use std::path::Path;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use config::{AppConfig, ConfigState};
 use tauri::{Manager, State};
@@ -54,9 +55,10 @@ pub fn run() {
         .setup(|app| {
             let config = config::load_or_init().expect("failed to load or init app config");
             let token = config.token.clone();
-            app.manage(ConfigState(Mutex::new(config)));
-            let job_tx = ws_server::spawn(token);
-            app.manage(job_tx);
+            let config_state = Arc::new(Mutex::new(config));
+            app.manage(ConfigState(config_state.clone()));
+            let runner = ws_server::spawn(token, config_state);
+            app.manage(runner);
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

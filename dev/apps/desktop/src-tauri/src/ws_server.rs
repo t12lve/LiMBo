@@ -4,16 +4,21 @@
 //! 1. Client sends `{ "type": "hello" }`.
 //! 2. Server replies `{ "type": "hello.ok", "token": "..." }`.
 //! 3. Client sends `{ "type": "auth", "token": "..." }`.
-//! 4. On match, server replies `{ "type": "auth.ok" }` then `{ "type": "jobs.snapshot", "jobs": [] }`
-//!    (stub until the job runner lands); otherwise `{ "type": "auth.fail", "error": "..." }` and the
-//!    connection is closed.
-//! 5. Once authenticated, `{ "type": "formats.list", "url": "..." }` runs `yt-dlp -J` (via
-//!    [`crate::ytdlp`]) and replies `formats.result` / `formats.error`. `download.create` /
-//!    `job.cancel` are parsed-but-ignored until Task 7's job runner lands.
+//! 4. On match, server replies `{ "type": "auth.ok" }` then `{ "type": "jobs.snapshot", "jobs": [...] }`
+//!    (from [`crate::job_runner::JobRunner`]); otherwise `{ "type": "auth.fail", "error": "..." }` and
+//!    the connection is closed.
+//! 5. Once authenticated:
+//!    - `{ "type": "formats.list", "url": "..." }` runs `yt-dlp -J` (via [`crate::ytdlp`]) and
+//!      replies `formats.result` / `formats.error`.
+//!    - `{ "type": "download.create", "url", "formatId", "trim"? }` queues a job on the
+//!      [`crate::job_runner::JobRunner`]; `job.created`/`job.progress`/`job.done`/`job.error` are
+//!      broadcast to every authenticated client (including the requester) as the job progresses.
+//!    - `{ "type": "job.cancel", "id" }` kills the job if active, or drops it from the queue.
 //!
 //! Bound strictly to `127.0.0.1` — never `0.0.0.0` — so the server is unreachable off-box.
 
 use std::net::SocketAddr;
+use std::sync::{Arc, Mutex};
 
 use futures_util::{SinkExt, StreamExt};
 use serde_json::{json, Value};
@@ -21,29 +26,34 @@ use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::broadcast;
 use tokio_tungstenite::tungstenite::Message;
 
+use crate::config::AppConfig;
+use crate::job_runner::JobRunner;
+
 const BIND_ADDR: &str = "127.0.0.1:4567";
 
 /// Broadcast sender for job lifecycle events (`job.created`/`job.progress`/`job.done`/`job.error`).
-/// Held by Tauri-managed state so future tasks (job runner) can publish to every authenticated client.
+/// Held by [`JobRunner`] to publish to every authenticated client.
 pub type JobEventSender = broadcast::Sender<String>;
 
-/// Spawns the WebSocket server on the current tokio runtime and returns the broadcast sender
-/// used to publish job events to all authenticated clients. Intended to be called once from
-/// the Tauri `setup` hook, inside a tokio runtime (e.g. `tauri::async_runtime::spawn`).
-pub fn spawn(token: String) -> JobEventSender {
+/// Spawns the WebSocket server on the current tokio runtime and returns the [`JobRunner`] used to
+/// queue downloads / cancellations and to publish job events to all authenticated clients.
+/// Intended to be called once from the Tauri `setup` hook, inside a tokio runtime.
+pub fn spawn(token: String, config: Arc<Mutex<AppConfig>>) -> Arc<JobRunner> {
     let (job_tx, _keep_alive_rx) = broadcast::channel::<String>(64);
-    let accept_tx = job_tx.clone();
+    let runner = JobRunner::new(job_tx.clone(), config);
+    let accept_tx = job_tx;
+    let accept_runner = runner.clone();
 
     tauri::async_runtime::spawn(async move {
-        if let Err(err) = listen(token, accept_tx).await {
+        if let Err(err) = listen(token, accept_tx, accept_runner).await {
             eprintln!("ws_server: fatal error: {err:?}");
         }
     });
 
-    job_tx
+    runner
 }
 
-async fn listen(token: String, job_tx: JobEventSender) -> anyhow::Result<()> {
+async fn listen(token: String, job_tx: JobEventSender, runner: Arc<JobRunner>) -> anyhow::Result<()> {
     let listener = TcpListener::bind(BIND_ADDR).await?;
     println!("ws_server: listening on {BIND_ADDR}");
 
@@ -51,9 +61,10 @@ async fn listen(token: String, job_tx: JobEventSender) -> anyhow::Result<()> {
         let (stream, addr) = listener.accept().await?;
         let token = token.clone();
         let job_rx = job_tx.subscribe();
+        let runner = runner.clone();
 
         tauri::async_runtime::spawn(async move {
-            if let Err(err) = handle_connection(stream, addr, token, job_rx).await {
+            if let Err(err) = handle_connection(stream, addr, token, job_rx, runner).await {
                 eprintln!("ws_server: connection {addr} closed with error: {err:?}");
             }
         });
@@ -65,6 +76,7 @@ async fn handle_connection(
     addr: SocketAddr,
     token: String,
     mut job_rx: broadcast::Receiver<String>,
+    runner: Arc<JobRunner>,
 ) -> anyhow::Result<()> {
     let ws_stream = tokio_tungstenite::accept_async(stream).await?;
     println!("ws_server: client connected from {addr}");
@@ -95,8 +107,11 @@ async fn handle_connection(
     }
 
     send_json(&mut write, json!({ "type": "auth.ok" })).await?;
-    // Stub: no job runner yet (Tasks 6-7), so a freshly authenticated client always sees an empty list.
-    send_json(&mut write, json!({ "type": "jobs.snapshot", "jobs": [] })).await?;
+    send_json(
+        &mut write,
+        json!({ "type": "jobs.snapshot", "jobs": runner.snapshot() }),
+    )
+    .await?;
 
     loop {
         tokio::select! {
@@ -104,7 +119,7 @@ async fn handle_connection(
                 match incoming {
                     Some(Ok(Message::Close(_))) | None => break,
                     Some(Ok(Message::Text(text))) => {
-                        if let Some(response) = handle_command(text.as_str()).await {
+                        if let Some(response) = handle_command(text.as_str(), &runner).await {
                             if send_json(&mut write, response).await.is_err() {
                                 break;
                             }
@@ -134,8 +149,9 @@ async fn handle_connection(
 }
 
 /// Dispatches a post-auth command frame. Returns the single response to send back, if any.
-/// `download.create` / `job.cancel` are intentionally unhandled here (Task 7's job runner).
-async fn handle_command(text: &str) -> Option<Value> {
+/// `download.create` / `job.cancel` reply via broadcast job events, not a direct response, so
+/// they return `None` here even on success.
+async fn handle_command(text: &str, runner: &JobRunner) -> Option<Value> {
     let value: Value = serde_json::from_str(text).ok()?;
 
     match msg_type(&value) {
@@ -155,6 +171,22 @@ async fn handle_command(text: &str) -> Option<Value> {
                 }),
                 Err(error) => json!({ "type": "formats.error", "error": error }),
             })
+        }
+        Some("download.create") => {
+            let url = value.get("url").and_then(Value::as_str)?.to_string();
+            let format_id = value.get("formatId").and_then(Value::as_str)?.to_string();
+            let trim = match value.get("trim") {
+                None | Some(Value::Null) => None,
+                Some(raw) => serde_json::from_value(raw.clone()).ok()?,
+            };
+
+            runner.create_download(url, format_id, trim);
+            None
+        }
+        Some("job.cancel") => {
+            let id = value.get("id").and_then(Value::as_str)?.to_string();
+            runner.cancel(&id);
+            None
         }
         _ => None,
     }
