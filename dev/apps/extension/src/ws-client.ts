@@ -204,9 +204,39 @@ async function openDesktopIfNeeded(): Promise<void> {
   }
 
   console.warn("[LiMBo] ws-client: desktop unreachable, opening", PROTOCOL_URL);
-  chrome.tabs.create({ url: PROTOCOL_URL }).catch((err) => {
+  try {
+    const storedTab = await chrome.storage.session.get("limboTabId");
+    const existingId =
+      typeof storedTab.limboTabId === "number" ? storedTab.limboTabId : null;
+
+    let tabId: number | null = null;
+    if (existingId !== null) {
+      try {
+        await chrome.tabs.update(existingId, { url: PROTOCOL_URL, active: false });
+        tabId = existingId;
+      } catch {
+        tabId = null;
+      }
+    }
+
+    if (tabId === null) {
+      const tab = await chrome.tabs.create({ url: PROTOCOL_URL, active: false });
+      tabId = tab.id ?? null;
+      if (tabId !== null) {
+        await chrome.storage.session.set({ limboTabId: tabId });
+      }
+    }
+
+    if (tabId !== null) {
+      const idToClose = tabId;
+      setTimeout(() => {
+        chrome.tabs.remove(idToClose).catch(() => {});
+        void chrome.storage.session.remove("limboTabId");
+      }, 1200);
+    }
+  } catch (err) {
     console.warn("[LiMBo] ws-client: failed to open limbo:// fallback", err);
-  });
+  }
 }
 
 function toError(err: unknown): Error {

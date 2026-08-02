@@ -67,6 +67,8 @@ struct QueuedJob {
     url: String,
     format_id: String,
     trim: Option<TrimRange>,
+    /// Netscape cookie jar contents from the extension (preferred while the browser stays open).
+    cookies: Option<String>,
 }
 
 struct RunnerState {
@@ -134,7 +136,13 @@ impl JobRunner {
 
     /// Queues a new download, broadcasts `job.created`, and wakes the dispatcher. Returns the
     /// generated job id.
-    pub fn create_download(&self, url: String, format_id: String, trim: Option<TrimRange>) -> String {
+    pub fn create_download(
+        &self,
+        url: String,
+        format_id: String,
+        trim: Option<TrimRange>,
+        cookies: Option<String>,
+    ) -> String {
         let id = uuid::Uuid::new_v4().to_string();
         let snapshot = JobSnapshot {
             id: id.clone(),
@@ -155,6 +163,7 @@ impl JobRunner {
                 url,
                 format_id,
                 trim,
+                cookies,
             });
         }
 
@@ -291,21 +300,28 @@ impl JobRunner {
             url,
             format_id,
             trim,
+            cookies,
         } = job;
 
         self.set_phase(&id, JobPhase::FetchingMeta);
 
-        let cookies = self.config.lock().unwrap().cookies_browser.clone();
-        let cookies_opt = if cookies.eq_ignore_ascii_case("none") || cookies.trim().is_empty() {
-            None
-        } else {
-            Some(cookies)
-        };
+        let cookies_file = cookies
+            .as_ref()
+            .filter(|c| !c.trim().is_empty())
+            .and_then(|c| ytdlp::write_cookies_file(c).ok());
+
+        let browser = self.cookies_browser();
+        let use_browser = cookies_file.is_none();
 
         let meta_url = url.clone();
-        let meta_cookies = cookies_opt.clone();
+        let meta_browser = if use_browser { browser.clone() } else { None };
+        let meta_cookies_path = cookies_file.clone();
         let meta = tokio::task::spawn_blocking(move || {
-            ytdlp::fetch_title_and_id(&meta_url, meta_cookies.as_deref())
+            ytdlp::fetch_title_and_id(
+                &meta_url,
+                meta_browser.as_deref(),
+                meta_cookies_path.as_deref(),
+            )
         })
         .await
         .unwrap_or_else(|join_err| Err(format!("internal error: {join_err}")));
@@ -313,6 +329,9 @@ impl JobRunner {
         let (title, video_id) = match meta {
             Ok(pair) => pair,
             Err(error) => {
+                if let Some(path) = &cookies_file {
+                    let _ = std::fs::remove_file(path);
+                }
                 self.finish_error(&id, error);
                 return;
             }
@@ -348,6 +367,8 @@ impl JobRunner {
         let download_url = url;
         let download_output_dir = output_dir.clone();
         let trim_secs = trim.map(|t| (t.start_sec, t.end_sec));
+        let download_browser = if use_browser { browser } else { None };
+        let download_cookies_path = cookies_file.clone();
         let result = tokio::task::spawn_blocking(move || {
             runner.run_download_process(
                 &job_id,
@@ -355,10 +376,16 @@ impl JobRunner {
                 &format_id,
                 &download_output_dir,
                 trim_secs,
+                download_browser.as_deref(),
+                download_cookies_path.as_deref(),
             )
         })
         .await
         .unwrap_or_else(|join_err| Err(format!("internal error: {join_err}")));
+
+        if let Some(path) = cookies_file {
+            let _ = std::fs::remove_file(path);
+        }
 
         let cancelled = self.state.lock().unwrap().active_cancelled;
 
@@ -403,6 +430,8 @@ impl JobRunner {
         format_id: &str,
         output_dir: &str,
         trim: Option<(f64, f64)>,
+        cookies_browser: Option<&str>,
+        cookies_file: Option<&std::path::Path>,
     ) -> Result<(), String> {
         let (stdout, stderr) = {
             // Keep cancellation and process registration atomic: if cancellation happened while
@@ -413,22 +442,13 @@ impl JobRunner {
                 return Err("cancelled".to_string());
             }
 
-            let cookies = {
-                let cfg = self.config.lock().unwrap();
-                let b = cfg.cookies_browser.trim().to_string();
-                if b.is_empty() || b.eq_ignore_ascii_case("none") {
-                    None
-                } else {
-                    Some(b)
-                }
-            };
-
             let mut child = ytdlp::download(ytdlp::DownloadRequest {
                 url,
                 format_id,
                 output_dir,
                 trim,
-                cookies_browser: cookies.as_deref(),
+                cookies_browser,
+                cookies_file,
             })?;
             let stdout = child.stdout.take();
             let stderr = child.stderr.take();

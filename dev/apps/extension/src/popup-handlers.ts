@@ -5,9 +5,10 @@
 import type { TrimRange } from "@limbo/shared";
 import { onServerMessage, send } from "./ws-client";
 import { enqueueDraft } from "./queue";
+import { exportNetscapeCookies } from "./export-cookies";
 import type { DownloadResult, FormatsResult } from "./popup-messages";
 
-const FORMATS_TIMEOUT_MS = 15000;
+const FORMATS_TIMEOUT_MS = 45000;
 
 type PendingFormatsRequest = {
   url: string;
@@ -60,12 +61,21 @@ function startFormatsRequest(request: PendingFormatsRequest): void {
     });
   }, FORMATS_TIMEOUT_MS);
 
-  send({ type: "formats.list", url: request.url }).catch((err: unknown) => {
-    finishFormatsRequest(request, {
-      ok: false,
-      error: `Bureau LiMBo injoignable : ${toMessage(err)}`,
-    });
-  });
+  void (async () => {
+    try {
+      const cookies = await exportNetscapeCookies(request.url);
+      await send({
+        type: "formats.list",
+        url: request.url,
+        cookies: cookies || undefined,
+      });
+    } catch (err: unknown) {
+      finishFormatsRequest(request, {
+        ok: false,
+        error: `Bureau LiMBo injoignable : ${toMessage(err)}`,
+      });
+    }
+  })();
 
   function finishFormatsRequest(requestToFinish: PendingFormatsRequest, result: FormatsResult): void {
     if (activeFormatsRequest !== requestToFinish) return;
@@ -100,11 +110,20 @@ export async function requestDownload(payload: {
   formatId: string;
   trim?: TrimRange;
 }): Promise<DownloadResult> {
+  const cookies = await exportNetscapeCookies(payload.url);
   try {
-    await send({ type: "download.create", ...payload });
+    await send({
+      type: "download.create",
+      ...payload,
+      cookies: cookies || undefined,
+    });
     return { ok: true, queued: false };
   } catch {
-    await enqueueDraft({ id: crypto.randomUUID(), ...payload });
+    await enqueueDraft({
+      id: crypto.randomUUID(),
+      ...payload,
+      cookies: cookies || undefined,
+    });
     return { ok: true, queued: true };
   }
 }

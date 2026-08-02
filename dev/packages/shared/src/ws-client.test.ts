@@ -30,7 +30,9 @@ class MockWebSocket {
 }
 
 const session: Record<string, unknown> = {};
-const tabsCreate = vi.fn().mockResolvedValue(undefined);
+const tabsCreate = vi.fn().mockResolvedValue({ id: 42 });
+const tabsUpdate = vi.fn().mockResolvedValue({ id: 42 });
+const tabsRemove = vi.fn().mockResolvedValue(undefined);
 
 function installChromeMock(): void {
   vi.stubGlobal("chrome", {
@@ -39,9 +41,12 @@ function installChromeMock(): void {
       session: {
         get: vi.fn(async (key: string) => ({ [key]: session[key] })),
         set: vi.fn(async (values: Record<string, unknown>) => Object.assign(session, values)),
+        remove: vi.fn(async (key: string) => {
+          delete session[key];
+        }),
       },
     },
-    tabs: { create: tabsCreate },
+    tabs: { create: tabsCreate, update: tabsUpdate, remove: tabsRemove },
   });
 }
 
@@ -65,7 +70,9 @@ describe("ws-client fallback", () => {
 
     ws.emit("close");
 
-    await vi.waitFor(() => expect(tabsCreate).toHaveBeenCalledWith({ url: "limbo://open" }));
+    await vi.waitFor(() =>
+      expect(tabsCreate).toHaveBeenCalledWith({ url: "limbo://open", active: false }),
+    );
   });
 
   test("uses the persisted cooldown after a service worker restart", async () => {

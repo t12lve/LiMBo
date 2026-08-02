@@ -80,7 +80,7 @@ fn enqueue_urls(
         }
         match validate::validate_download_request(&url, None) {
             Ok(()) => {
-                runner.create_download(url, format.clone(), None);
+                runner.create_download(url, format.clone(), None, None);
                 count += 1;
             }
             Err(error) => {

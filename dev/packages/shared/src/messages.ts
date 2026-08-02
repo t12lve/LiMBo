@@ -3,12 +3,13 @@ import type { JobPhase, JobSnapshot, TrimRange, VideoFormat } from "./types";
 export type WsClientMessage =
   | { type: "hello" }
   | { type: "auth"; token: string }
-  | { type: "formats.list"; url: string }
+  | { type: "formats.list"; url: string; cookies?: string }
   | {
       type: "download.create";
       url: string;
       formatId: string;
       trim?: TrimRange;
+      cookies?: string;
     }
   | { type: "job.cancel"; id: string };
 
@@ -112,12 +113,16 @@ export function isWsClientMessage(value: unknown): value is WsClientMessage {
     case "auth":
       return hasString(value, "token");
     case "formats.list":
-      return hasString(value, "url");
+      return (
+        hasString(value, "url") &&
+        (value.cookies === undefined || typeof value.cookies === "string")
+      );
     case "download.create":
       return (
         hasString(value, "url") &&
         hasString(value, "formatId") &&
-        (value.trim === undefined || isTrimRange(value.trim))
+        (value.trim === undefined || isTrimRange(value.trim)) &&
+        (value.cookies === undefined || typeof value.cookies === "string")
       );
     case "job.cancel":
       return hasString(value, "id");

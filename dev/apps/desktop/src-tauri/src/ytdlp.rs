@@ -99,7 +99,11 @@ fn hide_window(command: &mut Command) {
 }
 
 /// Shared flags for every yt-dlp invocation (encoding, Windows-safe names, JS runtime, cookies).
-fn apply_common_args(command: &mut Command, cookies_browser: Option<&str>) {
+fn apply_common_args(
+    command: &mut Command,
+    cookies_browser: Option<&str>,
+    cookies_file: Option<&Path>,
+) {
     command.arg("--encoding").arg("utf-8");
     command.arg("--windows-filenames");
     command.arg("--no-playlist");
@@ -115,13 +119,33 @@ fn apply_common_args(command: &mut Command, cookies_browser: Option<&str>) {
         }
     }
 
-    if let Some(browser) = cookies_browser {
+    // Prefer an explicit Netscape cookie file (from the extension — works while the browser
+    // stays open). Fall back to `--cookies-from-browser` only when no file is provided.
+    if let Some(path) = cookies_file {
+        command.arg("--cookies").arg(path);
+    } else if let Some(browser) = cookies_browser {
         let b = browser.trim().to_ascii_lowercase();
         if !b.is_empty() && b != "none" {
-            // Needed for Instagram / some Twitter / logged-in sites.
             command.arg("--cookies-from-browser").arg(b);
         }
     }
+}
+
+/// Writes a Netscape cookie jar under the system temp dir. Caller should delete when done.
+pub fn write_cookies_file(netscape: &str) -> Result<PathBuf, String> {
+    let path = std::env::temp_dir().join(format!("limbo-cookies-{}.txt", uuid::Uuid::new_v4()));
+    std::fs::write(&path, netscape).map_err(|e| format!("failed to write cookies file: {e}"))?;
+    Ok(path)
+}
+
+fn humanize_cookie_error(err: &str) -> String {
+    if err.contains("cookie database") || err.contains("7271") {
+        return format!(
+            "{err} — Astuce LiMBo : depuis l’extension, les cookies sont envoyés directement \
+             (recharge l’extension). Sinon ferme complètement le navigateur, ou exporte via l’extension."
+        );
+    }
+    err.to_string()
 }
 
 fn prepend_path_env(command: &mut Command, dir: &Path) {
@@ -139,11 +163,15 @@ fn run_hidden(command: &mut Command) -> std::io::Result<std::process::Output> {
     command.output()
 }
 
-pub fn fetch_title_and_id(url: &str, cookies_browser: Option<&str>) -> Result<(String, String), String> {
+pub fn fetch_title_and_id(
+    url: &str,
+    cookies_browser: Option<&str>,
+    cookies_file: Option<&Path>,
+) -> Result<(String, String), String> {
     let ytdlp = resolve_binary_path("yt-dlp.exe")?;
 
     let mut command = Command::new(&ytdlp);
-    apply_common_args(&mut command, cookies_browser);
+    apply_common_args(&mut command, cookies_browser, cookies_file);
     command.args([
         "--skip-download",
         "--print",
@@ -185,7 +213,6 @@ fn decode_utf8(bytes: &[u8]) -> String {
 fn format_ytdlp_failure(output: &std::process::Output) -> String {
     let stderr = decode_utf8(&output.stderr);
     let trimmed = stderr.trim();
-    // Keep the message short for the UI — take the last ERROR line if present.
     let concise = trimmed
         .lines()
         .rev()
@@ -193,7 +220,7 @@ fn format_ytdlp_failure(output: &std::process::Output) -> String {
         .or_else(|| trimmed.lines().rev().find(|l| l.contains("WARNING:")))
         .unwrap_or(trimmed);
     let clipped: String = concise.chars().take(280).collect();
-    format!("yt-dlp exited with {}: {clipped}", output.status)
+    humanize_cookie_error(&format!("yt-dlp exited with {}: {clipped}", output.status))
 }
 
 fn seconds_to_timecode(sec: f64) -> String {
@@ -210,6 +237,7 @@ pub struct DownloadRequest<'a> {
     pub output_dir: &'a str,
     pub trim: Option<(f64, f64)>,
     pub cookies_browser: Option<&'a str>,
+    pub cookies_file: Option<&'a Path>,
 }
 
 pub fn download(req: DownloadRequest) -> Result<Child, String> {
@@ -225,7 +253,7 @@ pub fn download(req: DownloadRequest) -> Result<Child, String> {
     );
 
     let mut command = Command::new(&ytdlp);
-    apply_common_args(&mut command, req.cookies_browser);
+    apply_common_args(&mut command, req.cookies_browser, req.cookies_file);
     command
         .arg("-f")
         .arg(req.format_id)
@@ -254,11 +282,15 @@ pub fn download(req: DownloadRequest) -> Result<Child, String> {
         .map_err(|e| format!("failed to spawn yt-dlp: {e}"))
 }
 
-pub fn list_formats(url: &str, cookies_browser: Option<&str>) -> Result<FormatsPayload, String> {
+pub fn list_formats(
+    url: &str,
+    cookies_browser: Option<&str>,
+    cookies_file: Option<&Path>,
+) -> Result<FormatsPayload, String> {
     let ytdlp = resolve_binary_path("yt-dlp.exe")?;
 
     let mut command = Command::new(&ytdlp);
-    apply_common_args(&mut command, cookies_browser);
+    apply_common_args(&mut command, cookies_browser, cookies_file);
     command.args(["-J", url]);
 
     let output = run_hidden(&mut command).map_err(|e| format!("failed to spawn yt-dlp: {e}"))?;

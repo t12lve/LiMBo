@@ -69,7 +69,7 @@ export default function PrefsBar() {
       </label>
 
       <label className="flex flex-col gap-1">
-        Cookies (Instagram…)
+        Cookies (batch desktop)
         <select
           value={cookies}
           onChange={(e) => {
@@ -85,6 +85,11 @@ export default function PrefsBar() {
           <option value="none">Aucun</option>
         </select>
       </label>
+      <p className="basis-full text-[10px] text-neutral-500">
+        L’extension envoie ses propres cookies (Instagram/Twitter) sans fermer le navigateur.
+        « Cookies navigateur » ne sert qu’au collage de liens dans le Desktop (ferme Edge/Chrome
+        sinon erreur « cookie database » — le message dit souvent « Chrome » même pour Edge).
+      </p>
 
       {saved && <span className="text-emerald-400">Enregistré</span>}
     </section>

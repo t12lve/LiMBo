@@ -176,9 +176,26 @@ async fn handle_command(text: &str, runner: &JobRunner) -> Option<Value> {
     match msg_type(&value) {
         Some("formats.list") => {
             let url = value.get("url").and_then(Value::as_str)?.to_string();
-            let cookies = runner.cookies_browser();
+            let cookies_netscape = value
+                .get("cookies")
+                .and_then(Value::as_str)
+                .map(str::to_string)
+                .filter(|s| !s.trim().is_empty());
+            let browser = runner.cookies_browser();
             let result = tokio::task::spawn_blocking(move || {
-                crate::ytdlp::list_formats(&url, cookies.as_deref())
+                let cookies_file = cookies_netscape
+                    .as_ref()
+                    .and_then(|c| crate::ytdlp::write_cookies_file(c).ok());
+                let use_browser = cookies_file.is_none();
+                let out = crate::ytdlp::list_formats(
+                    &url,
+                    if use_browser { browser.as_deref() } else { None },
+                    cookies_file.as_deref(),
+                );
+                if let Some(path) = cookies_file {
+                    let _ = std::fs::remove_file(path);
+                }
+                out
             })
             .await
             .unwrap_or_else(|join_err| Err(format!("internal error: {join_err}")));
@@ -201,11 +218,16 @@ async fn handle_command(text: &str, runner: &JobRunner) -> Option<Value> {
                 None | Some(Value::Null) => None,
                 Some(raw) => serde_json::from_value(raw.clone()).ok()?,
             };
+            let cookies = value
+                .get("cookies")
+                .and_then(Value::as_str)
+                .map(str::to_string)
+                .filter(|s| !s.trim().is_empty());
 
             // Reject before touching the queue: require http(s) + sane trim (see `crate::validate`).
             match crate::validate::validate_download_request(&url, trim.as_ref()) {
                 Ok(()) => {
-                    runner.create_download(url, format_id, trim);
+                    runner.create_download(url, format_id, trim, cookies);
                 }
                 Err(error) => {
                     runner.reject_download(url, error);

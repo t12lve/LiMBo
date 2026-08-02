@@ -1,14 +1,13 @@
 {
   "manifest_version": 3,
   "name": "LiMBo",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "action": { "default_popup": "src/popup/index.html", "default_title": "LiMBo" },
   "background": { "service_worker": "src/background.ts", "type": "module" },
-  "permissions": ["storage", "tabs", "alarms"],
+  "permissions": ["storage", "tabs", "alarms", "cookies"],
   "host_permissions": [
-    "*://www.youtube.com/*",
-    "*://youtube.com/*",
-    "*://youtu.be/*",
+    "http://*/*",
+    "https://*/*",
     "*://127.0.0.1:4567/*"
   ]
 }

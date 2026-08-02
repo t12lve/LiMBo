@@ -12,6 +12,7 @@ export type DraftJob = {
   url: string;
   formatId: string;
   trim?: TrimRange;
+  cookies?: string;
 };
 
 const QUEUE_STORAGE_KEY = "limboDraftQueue";
@@ -59,6 +60,7 @@ export async function flushQueue(): Promise<void> {
           url: draft.url,
           formatId: draft.formatId,
           trim: draft.trim,
+          cookies: draft.cookies,
         });
       } catch (err) {
         console.warn("[LiMBo] queue: failed to flush draft", draft.id, err);
