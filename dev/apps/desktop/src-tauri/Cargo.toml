@@ -31,6 +31,7 @@ tokio-tungstenite = "0.24"
 futures-util = "0.3"
 anyhow = "1"
 regex = "1"
+url = "2"
 
 # `limbo://open` is delivered as a CLI arg to a *new* process on Windows/Linux; the `deep-link`
 # feature lets the single-instance plugin forward that URL to the already-running instance

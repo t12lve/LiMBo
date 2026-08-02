@@ -2,6 +2,7 @@ mod config;
 mod job_runner;
 mod progress_parse;
 mod protocol;
+mod validate;
 mod ws_server;
 mod ytdlp;
 

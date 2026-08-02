@@ -151,6 +151,29 @@ impl JobRunner {
         id
     }
 
+    /// Rejects a `download.create` request that failed server-side validation (see
+    /// `crate::validate`): records a single job already in the `Error` phase — so the requester
+    /// sees *why* it was refused — without ever pushing it onto `queue`/running yt-dlp. Broadcasts
+    /// only `job.error` (no `job.created`), returning the synthetic job's id.
+    pub fn reject_download(&self, url: String, error: String) -> String {
+        let id = uuid::Uuid::new_v4().to_string();
+        let snapshot = JobSnapshot {
+            id: id.clone(),
+            url,
+            title: String::new(),
+            phase: JobPhase::Error,
+            percent: 0.0,
+            speed: String::new(),
+            eta: String::new(),
+            error: Some(error),
+        };
+
+        self.state.lock().unwrap().jobs.push(snapshot.clone());
+        self.broadcast(json!({ "type": "job.error", "job": snapshot }));
+        self.emit_job_updated(&snapshot);
+        id
+    }
+
     /// Kills the child process if `id` is the active job (its `.part` files are cleaned up by
     /// `run_job` once the killed process exits), or removes it from the queue if still pending.
     pub fn cancel(&self, id: &str) {
@@ -158,7 +181,7 @@ impl JobRunner {
 
         if state.active_id.as_deref() == Some(id) {
             if let Some(child) = state.active_child.as_mut() {
-                let _ = child.kill();
+                kill_process_tree(child);
             }
             state.active_cancelled = true;
             return;
@@ -426,6 +449,32 @@ impl JobRunner {
             self.set_phase(id, JobPhase::Trimming);
         }
     }
+}
+
+/// Kills `child` and, on Windows, its whole descendant tree. `Child::kill()` alone only signals
+/// the direct child; yt-dlp shells out to ffmpeg/ffprobe as separate child processes that it
+/// otherwise leaves running (and holding the partial output file open) after being killed.
+#[cfg(windows)]
+fn kill_process_tree(child: &mut Child) {
+    use std::os::windows::process::CommandExt;
+
+    // Matches `ytdlp::CREATE_NO_WINDOW`: suppresses the console window `taskkill` would
+    // otherwise briefly flash since this app has no console of its own.
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
+    let pid = child.id();
+    let _ = std::process::Command::new("taskkill")
+        .args(["/PID", &pid.to_string(), "/T", "/F"])
+        .creation_flags(CREATE_NO_WINDOW)
+        .output();
+    // Best-effort fallback (e.g. if `taskkill` is missing from PATH) — also reaps the direct
+    // child so `child.wait()` in `run_download_process` doesn't block indefinitely.
+    let _ = child.kill();
+}
+
+#[cfg(not(windows))]
+fn kill_process_tree(child: &mut Child) {
+    let _ = child.kill();
 }
 
 fn job_progress_payload(snapshot: &JobSnapshot) -> Value {

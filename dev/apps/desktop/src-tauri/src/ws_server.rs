@@ -16,6 +16,19 @@
 //!    - `{ "type": "job.cancel", "id" }` kills the job if active, or drops it from the queue.
 //!
 //! Bound strictly to `127.0.0.1` — never `0.0.0.0` — so the server is unreachable off-box.
+//!
+//! ## Origin policy
+//!
+//! Binding to `127.0.0.1` stops off-box attackers, but any page loaded in the user's browser
+//! can still open a WebSocket to `ws://127.0.0.1:4567` (there's no same-origin restriction on
+//! WebSocket connections) and, once past `hello`/`auth`, could enqueue downloads on the victim's
+//! behalf ("cross-site WebSocket hijacking"). The handshake is rejected up front (HTTP 403,
+//! before `hello`) unless the request's `Origin` header is one of:
+//!   - absent entirely — non-browser clients (our Node smoke scripts, `curl`, ...) don't send one;
+//!   - `chrome-extension://<any-id>` — the extension's own service worker/offscreen document;
+//!   - `http://127.0.0.1...` / `http://localhost...` (any port) — local dev tooling / test pages.
+//! Anything else (in particular any `https://` origin, i.e. a real website) is rejected, since a
+//! legitimate extension or local script never presents one of those.
 
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
@@ -24,6 +37,8 @@ use futures_util::{SinkExt, StreamExt};
 use serde_json::{json, Value};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::broadcast;
+use tokio_tungstenite::tungstenite::handshake::server::{ErrorResponse, Request, Response};
+use tokio_tungstenite::tungstenite::http::StatusCode;
 use tokio_tungstenite::tungstenite::Message;
 
 use crate::config::AppConfig;
@@ -82,7 +97,7 @@ async fn handle_connection(
     mut job_rx: broadcast::Receiver<String>,
     runner: Arc<JobRunner>,
 ) -> anyhow::Result<()> {
-    let ws_stream = tokio_tungstenite::accept_async(stream).await?;
+    let ws_stream = tokio_tungstenite::accept_hdr_async(stream, check_origin).await?;
     println!("ws_server: client connected from {addr}");
     let (mut write, mut read) = ws_stream.split();
 
@@ -184,7 +199,16 @@ async fn handle_command(text: &str, runner: &JobRunner) -> Option<Value> {
                 Some(raw) => serde_json::from_value(raw.clone()).ok()?,
             };
 
-            runner.create_download(url, format_id, trim);
+            // Reject before touching the queue: never spawn yt-dlp on an attacker/bug-supplied
+            // non-YouTube URL or an inverted/negative trim range (see `crate::validate`).
+            match crate::validate::validate_download_request(&url, trim.as_ref()) {
+                Ok(()) => {
+                    runner.create_download(url, format_id, trim);
+                }
+                Err(error) => {
+                    runner.reject_download(url, error);
+                }
+            }
             None
         }
         Some("job.cancel") => {
@@ -218,4 +242,74 @@ async fn send_json(
 
 fn msg_type(value: &Value) -> Option<&str> {
     value.get("type").and_then(Value::as_str)
+}
+
+/// `accept_hdr_async` callback enforcing the module-level origin policy: rejects the WS upgrade
+/// with `403 Forbidden` before any `hello`/`auth` frames are exchanged.
+fn check_origin(request: &Request, response: Response) -> Result<Response, ErrorResponse> {
+    let origin = request
+        .headers()
+        .get("origin")
+        .and_then(|value| value.to_str().ok());
+
+    if is_allowed_origin(origin) {
+        return Ok(response);
+    }
+
+    eprintln!("ws_server: rejected connection with disallowed Origin: {origin:?}");
+    let rejection = Response::builder()
+        .status(StatusCode::FORBIDDEN)
+        .body(Some("origin not allowed".to_string()))
+        .expect("static response builder call cannot fail");
+    Err(rejection)
+}
+
+/// See the module doc's "Origin policy" section for the rationale.
+fn is_allowed_origin(origin: Option<&str>) -> bool {
+    match origin {
+        None => true,
+        Some(origin) => {
+            origin.starts_with("chrome-extension://")
+                || origin.starts_with("http://127.0.0.1")
+                || origin.starts_with("http://localhost")
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_allowed_origin;
+
+    #[test]
+    fn allows_missing_origin() {
+        assert!(is_allowed_origin(None));
+    }
+
+    #[test]
+    fn allows_any_chrome_extension_id() {
+        assert!(is_allowed_origin(Some("chrome-extension://abcdefghijklmnop")));
+    }
+
+    #[test]
+    fn allows_localhost_and_loopback_with_any_port() {
+        assert!(is_allowed_origin(Some("http://127.0.0.1:5173")));
+        assert!(is_allowed_origin(Some("http://localhost:5173")));
+    }
+
+    #[test]
+    fn rejects_random_https_website_origins() {
+        assert!(!is_allowed_origin(Some("https://evil.example.com")));
+        assert!(!is_allowed_origin(Some("https://youtube.com")));
+    }
+
+    #[test]
+    fn rejects_null_origin() {
+        assert!(!is_allowed_origin(Some("null")));
+    }
+
+    #[test]
+    fn rejects_other_extension_schemes_and_https_loopback() {
+        assert!(!is_allowed_origin(Some("moz-extension://abcdefgh")));
+        assert!(!is_allowed_origin(Some("https://127.0.0.1")));
+    }
 }

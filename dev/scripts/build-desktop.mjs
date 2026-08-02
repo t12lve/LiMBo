@@ -47,7 +47,10 @@ const exePath = path.join(releaseDir, exeName);
 if (existsSync(exePath)) {
   cpSync(exePath, path.join(out, exeName));
 } else {
-  console.warn(`build-desktop: expected executable not found at ${exePath}`);
+  // `tauri build` reported success but the exe isn't where we expect it — treat this as a hard
+  // failure rather than silently shipping an empty prod/desktop/, which earlier only warned.
+  console.error(`build-desktop: expected executable not found at ${exePath}`);
+  process.exit(1);
 }
 
 const bundleDir = path.join(releaseDir, "bundle");
