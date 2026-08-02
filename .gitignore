@@ -1,3 +1,6 @@
 
 .worktrees
 .superpowers/
+
+# yt-dlp/ffmpeg sidecars are large and platform-specific; fetch via dev/scripts/fetch-binaries.mjs
+prod/bin/*.exe

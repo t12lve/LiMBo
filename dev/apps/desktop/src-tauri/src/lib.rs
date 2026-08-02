@@ -1,5 +1,7 @@
 mod config;
+mod progress_parse;
 mod ws_server;
+mod ytdlp;
 
 use std::path::Path;
 use std::sync::Mutex;

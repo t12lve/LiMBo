@@ -1929,6 +1929,7 @@ dependencies = [
  "anyhow",
  "dirs 5.0.1",
  "futures-util",
+ "regex",
  "serde",
  "serde_json",
  "tauri",

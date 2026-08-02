@@ -7,6 +7,9 @@
 //! 4. On match, server replies `{ "type": "auth.ok" }` then `{ "type": "jobs.snapshot", "jobs": [] }`
 //!    (stub until the job runner lands); otherwise `{ "type": "auth.fail", "error": "..." }` and the
 //!    connection is closed.
+//! 5. Once authenticated, `{ "type": "formats.list", "url": "..." }` runs `yt-dlp -J` (via
+//!    [`crate::ytdlp`]) and replies `formats.result` / `formats.error`. `download.create` /
+//!    `job.cancel` are parsed-but-ignored until Task 7's job runner lands.
 //!
 //! Bound strictly to `127.0.0.1` — never `0.0.0.0` — so the server is unreachable off-box.
 
@@ -100,8 +103,15 @@ async fn handle_connection(
             incoming = read.next() => {
                 match incoming {
                     Some(Ok(Message::Close(_))) | None => break,
+                    Some(Ok(Message::Text(text))) => {
+                        if let Some(response) = handle_command(text.as_str()).await {
+                            if send_json(&mut write, response).await.is_err() {
+                                break;
+                            }
+                        }
+                    }
                     Some(Ok(_)) => {
-                        // Command handling (formats.list / download.create / job.cancel) lands in Tasks 6-7.
+                        // Ping/Pong/Binary frames carry no command; ignored.
                     }
                     Some(Err(_)) => break,
                 }
@@ -121,6 +131,33 @@ async fn handle_connection(
     }
 
     Ok(())
+}
+
+/// Dispatches a post-auth command frame. Returns the single response to send back, if any.
+/// `download.create` / `job.cancel` are intentionally unhandled here (Task 7's job runner).
+async fn handle_command(text: &str) -> Option<Value> {
+    let value: Value = serde_json::from_str(text).ok()?;
+
+    match msg_type(&value) {
+        Some("formats.list") => {
+            let url = value.get("url").and_then(Value::as_str)?.to_string();
+            let result = tokio::task::spawn_blocking(move || crate::ytdlp::list_formats(&url))
+                .await
+                .unwrap_or_else(|join_err| Err(format!("internal error: {join_err}")));
+
+            Some(match result {
+                Ok(payload) => json!({
+                    "type": "formats.result",
+                    "formats": payload.formats,
+                    "title": payload.title,
+                    "duration": payload.duration,
+                    "thumbnail": payload.thumbnail,
+                }),
+                Err(error) => json!({ "type": "formats.error", "error": error }),
+            })
+        }
+        _ => None,
+    }
 }
 
 async fn next_json(
