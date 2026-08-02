@@ -82,7 +82,8 @@ fn enqueue_urls(
         }
         match validate::validate_download_request(&url, None) {
             Ok(()) => {
-                runner.create_download(url, format.clone(), None, None);
+                let caps = caps_from_format_id(&format);
+                runner.create_download(url, format.clone(), None, None, caps);
                 count += 1;
             }
             Err(error) => {
@@ -139,6 +140,17 @@ fn update_prefs(state: State<ConfigState>, prefs: PrefsUpdate) -> Result<AppConf
     }
     config::save(&config)?;
     Ok(config.clone())
+}
+
+fn caps_from_format_id(format_id: &str) -> Option<(bool, bool)> {
+    // Reuse path heuristics: (has_video, has_audio).
+    let mode = paths::download_mode(format_id, false, None);
+    match mode.as_str() {
+        "son" => Some((false, true)),
+        "video" => Some((true, false)),
+        "combo" => Some((true, true)),
+        _ => None,
+    }
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]

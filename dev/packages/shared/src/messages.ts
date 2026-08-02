@@ -16,6 +16,8 @@ export type WsClientMessage =
       formatId: string;
       trim?: TrimRange;
       cookies?: string;
+      hasAudio?: boolean;
+      hasVideo?: boolean;
     }
   | { type: "job.cancel"; id: string };
 
@@ -129,7 +131,9 @@ export function isWsClientMessage(value: unknown): value is WsClientMessage {
         hasString(value, "url") &&
         hasString(value, "formatId") &&
         (value.trim === undefined || isTrimRange(value.trim)) &&
-        (value.cookies === undefined || typeof value.cookies === "string")
+        (value.cookies === undefined || typeof value.cookies === "string") &&
+        (value.hasAudio === undefined || typeof value.hasAudio === "boolean") &&
+        (value.hasVideo === undefined || typeof value.hasVideo === "boolean")
       );
     case "job.cancel":
       return hasString(value, "id");

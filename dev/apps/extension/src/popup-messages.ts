@@ -8,7 +8,13 @@ export type PopupRequest =
   | { type: "popup.formats"; url: string }
   | {
       type: "popup.download";
-      payload: { url: string; formatId: string; trim?: TrimRange };
+      payload: {
+        url: string;
+        formatId: string;
+        trim?: TrimRange;
+        hasAudio?: boolean;
+        hasVideo?: boolean;
+      };
     };
 
 export type FormatsResult =

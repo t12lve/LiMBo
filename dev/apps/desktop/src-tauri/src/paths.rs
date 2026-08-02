@@ -45,15 +45,22 @@ pub fn normalize_platform(extractor: &str) -> String {
     }
 }
 
-/// Derive download mode label from format selector + trim flag.
-pub fn download_mode(format_id: &str, trimmed: bool) -> String {
-    let f = format_id.trim().to_ascii_lowercase();
-    let base = if is_audio_only(&f) {
-        "son"
-    } else if is_video_only(&f) {
-        "sans-son"
+/// Derive download mode label from caps and/or format selector + trim flag.
+/// Prefer explicit `(has_video, has_audio)` when known (curated formats use numeric ids).
+pub fn download_mode(
+    format_id: &str,
+    trimmed: bool,
+    caps: Option<(bool /* has_video */, bool /* has_audio */)>,
+) -> String {
+    let base = if let Some((has_video, has_audio)) = caps {
+        match (has_video, has_audio) {
+            (true, true) => "combo",
+            (false, true) => "son",
+            (true, false) => "video",
+            (false, false) => infer_mode_from_format_id(format_id),
+        }
     } else {
-        "combo"
+        infer_mode_from_format_id(format_id)
     };
     if trimmed {
         format!("{base}_trimmed")
@@ -62,9 +69,24 @@ pub fn download_mode(format_id: &str, trimmed: bool) -> String {
     }
 }
 
+fn infer_mode_from_format_id(format_id: &str) -> &'static str {
+    let f = format_id.trim().to_ascii_lowercase();
+    if is_audio_only(&f) {
+        "son"
+    } else if is_video_only(&f) {
+        "video"
+    } else {
+        "combo"
+    }
+}
+
 fn is_audio_only(f: &str) -> bool {
     if f == "ba" || f == "ba/b" || f == "bestaudio" || f.starts_with("bestaudio") {
         return true;
+    }
+    // Merge selectors like `bv*+ba/b` are combo, not audio-only.
+    if f.contains('+') {
+        return false;
     }
     let has_audio = f.contains("ba") || f.contains("audio");
     let has_video = f.contains("bv") || f.contains("video") || f.contains("wv");
@@ -75,7 +97,7 @@ fn is_video_only(f: &str) -> bool {
     if f.contains('+') {
         return false;
     }
-    let has_video = f.contains("bv") || f.starts_with("wv");
+    let has_video = f.contains("bv") || f.starts_with("wv") || f.contains("video");
     let has_audio = f.contains("ba") || f.contains("audio");
     has_video && !has_audio
 }
@@ -124,18 +146,24 @@ mod tests {
 
     #[test]
     fn mode_audio_only() {
-        assert_eq!(download_mode("ba/b", false), "son");
-        assert_eq!(download_mode("bestaudio", false), "son");
+        assert_eq!(download_mode("ba/b", false, None), "son");
+        assert_eq!(download_mode("bestaudio", false, None), "son");
+        assert_eq!(download_mode("251", false, Some((false, true))), "son");
     }
 
     #[test]
     fn mode_trimmed_combo() {
-        assert_eq!(download_mode("bv*+ba/b", true), "combo_trimmed");
+        assert_eq!(download_mode("bv*+ba/b", true, None), "combo_trimmed");
+        assert_eq!(
+            download_mode("137+140", true, Some((true, true))),
+            "combo_trimmed"
+        );
     }
 
     #[test]
-    fn mode_sans_son() {
-        assert_eq!(download_mode("bv*", false), "sans-son");
+    fn mode_video_only() {
+        assert_eq!(download_mode("bv*", false, None), "video");
+        assert_eq!(download_mode("299", false, Some((true, false))), "video");
     }
 
     #[test]

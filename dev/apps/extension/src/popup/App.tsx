@@ -140,6 +140,9 @@ export default function App() {
 
   async function handleDownload() {
     if (tab.status !== "ready" || selectedFormatId === null) return;
+    if (formatsState.status !== "loaded") return;
+
+    const selected = formatsState.formats.find((f) => f.formatId === selectedFormatId);
 
     setDownloadState({ status: "sending" });
     try {
@@ -149,6 +152,8 @@ export default function App() {
           url: tab.url,
           formatId: selectedFormatId,
           trim: trim.range ?? undefined,
+          hasAudio: selected?.hasAudio,
+          hasVideo: selected?.hasVideo,
         },
       });
       setDownloadState(

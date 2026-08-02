@@ -109,6 +109,8 @@ export async function requestDownload(payload: {
   url: string;
   formatId: string;
   trim?: TrimRange;
+  hasAudio?: boolean;
+  hasVideo?: boolean;
 }): Promise<DownloadResult> {
   const cookies = await exportNetscapeCookies(payload.url);
   try {

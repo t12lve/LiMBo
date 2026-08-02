@@ -229,11 +229,17 @@ async fn handle_command(text: &str, runner: &JobRunner) -> Option<Value> {
                 .and_then(Value::as_str)
                 .map(str::to_string)
                 .filter(|s| !s.trim().is_empty());
+            let has_audio = value.get("hasAudio").and_then(Value::as_bool);
+            let has_video = value.get("hasVideo").and_then(Value::as_bool);
+            let caps = match (has_video, has_audio) {
+                (Some(v), Some(a)) => Some((v, a)),
+                _ => None,
+            };
 
             // Reject before touching the queue: require http(s) + sane trim (see `crate::validate`).
             match crate::validate::validate_download_request(&url, trim.as_ref()) {
                 Ok(()) => {
-                    runner.create_download(url, format_id, trim, cookies);
+                    runner.create_download(url, format_id, trim, cookies, caps);
                 }
                 Err(error) => {
                     runner.reject_download(url, error);

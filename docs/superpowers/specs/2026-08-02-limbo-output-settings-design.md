@@ -48,7 +48,7 @@
 |------|-----------|
 | `combo` | Vidéo + audio |
 | `son` | Audio seul |
-| `sans-son` | Vidéo sans audio |
+| `video` | Vidéo sans audio |
 | `…_trimmed` | Suffixe additionnel si `trim` présent (ex. `combo_trimmed`, `son_trimmed`) |
 
 **Règles :**

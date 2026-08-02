@@ -13,6 +13,8 @@ export type DraftJob = {
   formatId: string;
   trim?: TrimRange;
   cookies?: string;
+  hasAudio?: boolean;
+  hasVideo?: boolean;
 };
 
 const QUEUE_STORAGE_KEY = "limboDraftQueue";
@@ -61,6 +63,8 @@ export async function flushQueue(): Promise<void> {
           formatId: draft.formatId,
           trim: draft.trim,
           cookies: draft.cookies,
+          hasAudio: draft.hasAudio,
+          hasVideo: draft.hasVideo,
         });
       } catch (err) {
         console.warn("[LiMBo] queue: failed to flush draft", draft.id, err);

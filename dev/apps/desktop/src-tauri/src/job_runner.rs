@@ -69,6 +69,8 @@ struct QueuedJob {
     trim: Option<TrimRange>,
     /// Netscape cookie jar contents from the extension (preferred while the browser stays open).
     cookies: Option<String>,
+    /// `(has_video, has_audio)` when known — used for output filename mode.
+    caps: Option<(bool, bool)>,
 }
 
 struct RunnerState {
@@ -152,6 +154,7 @@ impl JobRunner {
         format_id: String,
         trim: Option<TrimRange>,
         cookies: Option<String>,
+        caps: Option<(bool, bool)>,
     ) -> String {
         let id = uuid::Uuid::new_v4().to_string();
         let snapshot = JobSnapshot {
@@ -174,6 +177,7 @@ impl JobRunner {
                 format_id,
                 trim,
                 cookies,
+                caps,
             });
         }
 
@@ -311,6 +315,7 @@ impl JobRunner {
             format_id,
             trim,
             cookies,
+            caps,
         } = job;
 
         self.set_phase(&id, JobPhase::FetchingMeta);
@@ -357,7 +362,7 @@ impl JobRunner {
         };
 
         let platform = crate::paths::normalize_platform(&meta.extractor);
-        let mode = crate::paths::download_mode(&format_id, trim.is_some());
+        let mode = crate::paths::download_mode(&format_id, trim.is_some(), caps);
         let stamp = chrono::Local::now().format("%Y%m%d-%H%M%S").to_string();
         let sub = crate::paths::job_subdir(&platform, &meta.title, &meta.id);
         let job_dir_path = crate::paths::job_dir(std::path::Path::new(&output_root), &sub);
