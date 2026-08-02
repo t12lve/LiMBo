@@ -236,6 +236,14 @@ impl JobRunner {
         };
         self.update_job(&id, |job| job.title = title);
 
+        if self.is_active_cancelled() {
+            if let Some(output_dir) = self.config.lock().unwrap().output_dir.clone() {
+                cleanup_partial_files(&output_dir, &video_id);
+            }
+            self.finish_error(&id, "cancelled".to_string());
+            return;
+        }
+
         let output_dir = match self.config.lock().unwrap().output_dir.clone() {
             Some(dir) if !dir.trim().is_empty() => dir,
             _ => {
@@ -243,6 +251,12 @@ impl JobRunner {
                 return;
             }
         };
+
+        if self.is_active_cancelled() {
+            cleanup_partial_files(&output_dir, &video_id);
+            self.finish_error(&id, "cancelled".to_string());
+            return;
+        }
 
         self.set_phase(&id, JobPhase::Downloading);
 
@@ -252,7 +266,13 @@ impl JobRunner {
         let download_output_dir = output_dir.clone();
         let trim_secs = trim.map(|t| (t.start_sec, t.end_sec));
         let result = tokio::task::spawn_blocking(move || {
-            runner.run_download_process(&job_id, &download_url, &format_id, &download_output_dir, trim_secs)
+            runner.run_download_process(
+                &job_id,
+                &download_url,
+                &format_id,
+                &download_output_dir,
+                trim_secs,
+            )
         })
         .await
         .unwrap_or_else(|join_err| Err(format!("internal error: {join_err}")));
@@ -278,6 +298,10 @@ impl JobRunner {
         }
     }
 
+    fn is_active_cancelled(&self) -> bool {
+        self.state.lock().unwrap().active_cancelled
+    }
+
     fn set_phase(&self, id: &str, phase: JobPhase) {
         if let Some(snapshot) = self.update_job(id, |job| job.phase = phase) {
             self.broadcast(job_progress_payload(&snapshot));
@@ -295,20 +319,26 @@ impl JobRunner {
         output_dir: &str,
         trim: Option<(f64, f64)>,
     ) -> Result<(), String> {
-        let mut child = ytdlp::download(ytdlp::DownloadRequest {
-            url,
-            format_id,
-            output_dir,
-            trim,
-        })?;
-
-        let stdout = child.stdout.take();
-        let stderr = child.stderr.take();
-
-        {
+        let (stdout, stderr) = {
+            // Keep cancellation and process registration atomic: if cancellation happened while
+            // metadata was fetched, do not spawn yt-dlp; otherwise `cancel()` can kill the
+            // registered child before this lock is released.
             let mut state = self.state.lock().unwrap();
+            if state.active_cancelled {
+                return Err("cancelled".to_string());
+            }
+
+            let mut child = ytdlp::download(ytdlp::DownloadRequest {
+                url,
+                format_id,
+                output_dir,
+                trim,
+            })?;
+            let stdout = child.stdout.take();
+            let stderr = child.stderr.take();
             state.active_child = Some(child);
-        }
+            (stdout, stderr)
+        };
 
         let stderr_buf = Arc::new(Mutex::new(String::new()));
         let stderr_thread = stderr.map(|mut stderr| {
