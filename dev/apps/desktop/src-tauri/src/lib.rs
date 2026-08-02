@@ -1,6 +1,7 @@
 mod config;
 mod job_runner;
 mod progress_parse;
+mod protocol;
 mod ws_server;
 mod ytdlp;
 
@@ -10,6 +11,7 @@ use std::sync::{Arc, Mutex};
 use config::{AppConfig, ConfigState};
 use job_runner::JobRunner;
 use tauri::{Manager, State};
+use tauri_plugin_deep_link::DeepLinkExt;
 
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
 #[tauri::command]
@@ -62,10 +64,42 @@ fn cancel_job(runner: State<Arc<JobRunner>>, id: String) {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let mut builder = tauri::Builder::default();
+
+    // Must be the first plugin registered. On Windows/Linux, `limbo://open` spawns a brand new
+    // process with the URL as its only CLI arg; the `deep-link` feature on this plugin forwards
+    // that argv straight to the already-running instance's deep-link plugin (triggering
+    // `on_open_url` below) instead of us needing to parse `argv` by hand.
+    #[cfg(any(windows, target_os = "linux"))]
+    {
+        builder = builder.plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+            protocol::focus_main_window(app);
+        }));
+    }
+
+    builder
+        .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
+            // Dev builds aren't installed, so the OS doesn't know about the `limbo` scheme yet;
+            // register it at runtime. Release builds get this for free from the bundler/installer.
+            #[cfg(any(target_os = "linux", all(debug_assertions, windows)))]
+            app.deep_link().register_all()?;
+
+            let handle = app.handle().clone();
+            app.deep_link().on_open_url(move |event| {
+                let urls: Vec<String> = event.urls().iter().map(ToString::to_string).collect();
+                protocol::handle_urls(&handle, &urls);
+            });
+
+            // Cold start via `limbo://open`: the deep-link plugin parses `std::env::args()` on
+            // init, before this `setup` hook runs, so the URL is already available here.
+            if let Some(urls) = app.deep_link().get_current()? {
+                let urls: Vec<String> = urls.iter().map(ToString::to_string).collect();
+                protocol::handle_urls(app.handle(), &urls);
+            }
+
             let config = config::load_or_init().expect("failed to load or init app config");
             let token = config.token.clone();
             let config_state = Arc::new(Mutex::new(config));
