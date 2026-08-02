@@ -59,7 +59,7 @@ function JobRow({ job }: { job: JobSnapshot }) {
       </div>
 
       <div className="flex items-center justify-between text-xs text-neutral-400">
-        <span>
+        <span className="min-w-0 truncate" title={job.error ?? undefined}>
           {PHASE_LABELS[job.phase]}
           {job.error ? ` — ${job.error}` : ""}
         </span>

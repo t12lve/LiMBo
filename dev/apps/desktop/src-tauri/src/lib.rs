@@ -63,6 +63,36 @@ fn cancel_job(runner: State<Arc<JobRunner>>, id: String) {
     runner.cancel(&id);
 }
 
+/// Enqueue many http(s) URLs with a shared format selector (default: best video+audio).
+#[tauri::command]
+fn enqueue_urls(
+    runner: State<Arc<JobRunner>>,
+    urls: Vec<String>,
+    format_id: Option<String>,
+) -> Result<usize, String> {
+    let format = format_id.unwrap_or_else(|| "bv*+ba/b".to_string());
+    let mut count = 0usize;
+    for raw in urls {
+        let url = raw.trim().to_string();
+        if url.is_empty() {
+            continue;
+        }
+        match validate::validate_download_request(&url, None) {
+            Ok(()) => {
+                runner.create_download(url, format.clone(), None);
+                count += 1;
+            }
+            Err(error) => {
+                runner.reject_download(url, error);
+            }
+        }
+    }
+    if count == 0 {
+        return Err("aucun lien http(s) valide".to_string());
+    }
+    Ok(count)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let mut builder = tauri::Builder::default();
@@ -115,7 +145,8 @@ pub fn run() {
             ensure_token,
             set_output_dir,
             get_jobs_snapshot,
-            cancel_job
+            cancel_job,
+            enqueue_urls
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

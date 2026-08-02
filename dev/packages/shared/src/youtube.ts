@@ -1,3 +1,25 @@
+/** Returns a usable http(s) page URL, or null for chrome:// / about: / invalid. */
+export function extractPageVideoUrl(pageUrl: string): string | null {
+  let url: URL;
+  try {
+    url = new URL(pageUrl);
+  } catch {
+    return null;
+  }
+
+  if (url.protocol !== "http:" && url.protocol !== "https:") {
+    return null;
+  }
+
+  // Prefer a clean YouTube watch URL when we can (drops timestamps / playlists params).
+  const youtube = extractYoutubeVideoUrl(pageUrl);
+  if (youtube) {
+    return youtube;
+  }
+
+  return url.toString();
+}
+
 const YOUTUBE_HOSTS = new Set([
   "youtube.com",
   "www.youtube.com",

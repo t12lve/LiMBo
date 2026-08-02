@@ -1,12 +1,10 @@
-//! Sidecar wrapper around `yt-dlp` for metadata/format discovery (`formats.list`).
+//! Sidecar wrapper around `yt-dlp` for metadata/format discovery and downloads.
 //!
-//! Binary resolution: prefers the repo's `prod/bin/<name>` (baked in via `CARGO_MANIFEST_DIR`
-//! at compile time, so this only resolves on the dev machine's checkout), then falls back to
-//! a file named `<name>` next to the running executable (covers a packaged build where the
-//! sidecar was copied alongside the app). Run `node scripts/fetch-binaries.mjs` to populate
-//! `prod/bin/` locally — the `.exe`s themselves are gitignored.
+//! Binary resolution: prefers the repo's `prod/bin/<name>`, then a file next to the running
+//! executable. YouTube now requires an external JS runtime (EJS); we pass `--js-runtimes node`
+//! with an absolute path when Node is available on the machine.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 
 use serde::Serialize;
@@ -36,8 +34,6 @@ pub struct FormatsPayload {
     pub formats: Vec<VideoFormat>,
 }
 
-/// Repo-relative `prod/bin/` directory as seen from this crate's manifest, i.e.
-/// `dev/apps/desktop/src-tauri/../../../../prod/bin` = `<repo root>/prod/bin`.
 fn repo_bin_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../../prod/bin")
 }
@@ -48,7 +44,10 @@ fn resolve_binary_path(name: &str) -> Result<PathBuf, String> {
         return Ok(repo_candidate);
     }
 
-    if let Some(exe_dir) = std::env::current_exe().ok().and_then(|p| p.parent().map(PathBuf::from)) {
+    if let Some(exe_dir) = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(PathBuf::from))
+    {
         let sidecar_candidate = exe_dir.join(name);
         if sidecar_candidate.is_file() {
             return Ok(sidecar_candidate);
@@ -61,6 +60,36 @@ fn resolve_binary_path(name: &str) -> Result<PathBuf, String> {
     ))
 }
 
+/// Locates a usable Node.js ≥20 for yt-dlp's YouTube JS challenges.
+fn resolve_node_path() -> Option<PathBuf> {
+    let candidates = [
+        std::env::var_os("NODE_PATH").map(PathBuf::from),
+        which_in_path("node.exe"),
+        which_in_path("node"),
+        Some(PathBuf::from(r"C:\Program Files\nodejs\node.exe")),
+        Some(PathBuf::from(r"C:\Program Files (x86)\nodejs\node.exe")),
+        dirs::home_dir().map(|h| h.join(r"AppData\Local\Programs\node\node.exe")),
+    ];
+
+    for candidate in candidates.into_iter().flatten() {
+        if candidate.is_file() {
+            return Some(candidate);
+        }
+    }
+    None
+}
+
+fn which_in_path(name: &str) -> Option<PathBuf> {
+    let path = std::env::var_os("PATH")?;
+    for dir in std::env::split_paths(&path) {
+        let candidate = dir.join(name);
+        if candidate.is_file() {
+            return Some(candidate);
+        }
+    }
+    None
+}
+
 fn hide_window(command: &mut Command) {
     #[cfg(windows)]
     {
@@ -69,39 +98,61 @@ fn hide_window(command: &mut Command) {
     }
 }
 
+/// Shared flags for every yt-dlp invocation (encoding, Windows-safe names, JS runtime).
+fn apply_common_args(command: &mut Command) {
+    command.arg("--encoding").arg("utf-8");
+    command.arg("--windows-filenames");
+    command.arg("--no-playlist");
+
+    if let Some(node) = resolve_node_path() {
+        let runtime = format!("node:{}", node.display());
+        command.arg("--js-runtimes").arg(runtime);
+    }
+
+    // Ensure Node is findable even when Tauri's PATH is minimal.
+    if let Some(node) = resolve_node_path() {
+        if let Some(dir) = node.parent() {
+            prepend_path_env(command, dir);
+        }
+    }
+}
+
+fn prepend_path_env(command: &mut Command, dir: &Path) {
+    let mut paths = vec![dir.to_path_buf()];
+    if let Some(existing) = std::env::var_os("PATH") {
+        paths.extend(std::env::split_paths(&existing));
+    }
+    if let Ok(joined) = std::env::join_paths(paths) {
+        command.env("PATH", joined);
+    }
+}
+
 fn run_hidden(command: &mut Command) -> std::io::Result<std::process::Output> {
     hide_window(command);
     command.output()
 }
 
-/// Runs a metadata-only query (`--skip-download`) to obtain a video's title and id without
-/// pulling the full `-J` JSON payload. Used by the job runner to fill in `JobSnapshot.title`
-/// and to name `.part` files for cleanup, since `download.create` only carries `url`/`formatId`.
 pub fn fetch_title_and_id(url: &str) -> Result<(String, String), String> {
     let ytdlp = resolve_binary_path("yt-dlp.exe")?;
 
-    let output = run_hidden(Command::new(&ytdlp).args([
-        "--no-playlist",
+    let mut command = Command::new(&ytdlp);
+    apply_common_args(&mut command);
+    command.args([
         "--skip-download",
         "--print",
         "%(title)s",
         "--print",
         "%(id)s",
         url,
-    ]))
-    .map_err(|e| format!("failed to spawn yt-dlp: {e}"))?;
+    ]);
+
+    let output = run_hidden(&mut command).map_err(|e| format!("failed to spawn yt-dlp: {e}"))?;
 
     if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        let trimmed = stderr.trim();
-        return Err(if trimmed.is_empty() {
-            format!("yt-dlp exited with {}", output.status)
-        } else {
-            format!("yt-dlp exited with {}: {trimmed}", output.status)
-        });
+        return Err(format_ytdlp_failure(&output));
     }
 
-    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stdout = decode_utf8(&output.stdout);
     let mut lines = stdout.lines();
     let title = lines.next().unwrap_or("").trim().to_string();
     let id = lines.next().unwrap_or("").trim().to_string();
@@ -110,7 +161,32 @@ pub fn fetch_title_and_id(url: &str) -> Result<(String, String), String> {
         return Err("yt-dlp did not return a video id".to_string());
     }
 
-    Ok((if title.is_empty() { "Untitled".to_string() } else { title }, id))
+    Ok((
+        if title.is_empty() {
+            "Untitled".to_string()
+        } else {
+            title
+        },
+        id,
+    ))
+}
+
+fn decode_utf8(bytes: &[u8]) -> String {
+    String::from_utf8_lossy(bytes).into_owned()
+}
+
+fn format_ytdlp_failure(output: &std::process::Output) -> String {
+    let stderr = decode_utf8(&output.stderr);
+    let trimmed = stderr.trim();
+    // Keep the message short for the UI — take the last ERROR line if present.
+    let concise = trimmed
+        .lines()
+        .rev()
+        .find(|l| l.contains("ERROR:") || l.contains("Errno"))
+        .or_else(|| trimmed.lines().rev().find(|l| l.contains("WARNING:")))
+        .unwrap_or(trimmed);
+    let clipped: String = concise.chars().take(280).collect();
+    format!("yt-dlp exited with {}: {clipped}", output.status)
 }
 
 fn seconds_to_timecode(sec: f64) -> String {
@@ -121,20 +197,13 @@ fn seconds_to_timecode(sec: f64) -> String {
     format!("{hours:02}:{minutes:02}:{seconds:02}")
 }
 
-/// Parameters for [`download`]. Borrowed rather than owned since the caller (job runner) already
-/// holds the owned strings for the duration of the blocking call.
 pub struct DownloadRequest<'a> {
     pub url: &'a str,
     pub format_id: &'a str,
     pub output_dir: &'a str,
-    /// `(startSec, endSec)`, forwarded to `yt-dlp --download-sections "*HH:MM:SS-HH:MM:SS"`.
     pub trim: Option<(f64, f64)>,
 }
 
-/// Spawns `yt-dlp` to download `format_id` from `url` into `output_dir` (optionally trimmed),
-/// with stdout/stderr piped so the caller can stream `--newline` progress and capture failures.
-/// The caller owns the returned [`Child`]: it must read `stdout`, and either `wait()` it to
-/// completion or `kill()` it to cancel.
 pub fn download(req: DownloadRequest) -> Result<Child, String> {
     let ytdlp = resolve_binary_path("yt-dlp.exe")?;
     let ffmpeg = resolve_binary_path("ffmpeg.exe")?;
@@ -143,21 +212,18 @@ pub fn download(req: DownloadRequest) -> Result<Child, String> {
         .ok_or_else(|| "could not resolve ffmpeg.exe's parent directory".to_string())?;
 
     let output_template = format!(
-        "{}/%(title)s [%(id)s].%(ext)s",
+        "{}/%(title).180B [%(id)s].%(ext)s",
         req.output_dir.trim_end_matches(['/', '\\'])
     );
 
     let mut command = Command::new(&ytdlp);
+    apply_common_args(&mut command);
     command
         .arg("-f")
         .arg(req.format_id)
-        .arg("--no-playlist")
         .arg("-o")
         .arg(&output_template)
         .arg("--newline")
-        // Without this, yt-dlp silently skips (exit 0, no download) when a file already sits at
-        // the output path — e.g. re-downloading the same video/format with a different trim range
-        // would otherwise reuse the untrimmed file from a prior job instead of regenerating it.
         .arg("--force-overwrites")
         .arg("--ffmpeg-location")
         .arg(ffmpeg_dir);
@@ -175,30 +241,38 @@ pub fn download(req: DownloadRequest) -> Result<Child, String> {
     command.stderr(Stdio::piped());
     hide_window(&mut command);
 
-    command.spawn().map_err(|e| format!("failed to spawn yt-dlp: {e}"))
+    command
+        .spawn()
+        .map_err(|e| format!("failed to spawn yt-dlp: {e}"))
 }
 
-/// Runs `yt-dlp -J --no-playlist <url>` and turns the resulting JSON into a `FormatsPayload`.
 pub fn list_formats(url: &str) -> Result<FormatsPayload, String> {
     let ytdlp = resolve_binary_path("yt-dlp.exe")?;
 
-    let output = run_hidden(Command::new(&ytdlp).args(["-J", "--no-playlist", url]))
-        .map_err(|e| format!("failed to spawn yt-dlp: {e}"))?;
+    let mut command = Command::new(&ytdlp);
+    apply_common_args(&mut command);
+    command.args(["-J", url]);
+
+    let output = run_hidden(&mut command).map_err(|e| format!("failed to spawn yt-dlp: {e}"))?;
 
     if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        let trimmed = stderr.trim();
-        return Err(if trimmed.is_empty() {
-            format!("yt-dlp exited with {}", output.status)
-        } else {
-            format!("yt-dlp exited with {}: {trimmed}", output.status)
-        });
+        return Err(format_ytdlp_failure(&output));
     }
 
     let raw: Value = serde_json::from_slice(&output.stdout)
         .map_err(|e| format!("failed to parse yt-dlp JSON output: {e}"))?;
 
     parse_formats_payload(&raw)
+}
+
+#[derive(Clone)]
+struct RawFormat {
+    format_id: String,
+    ext: String,
+    height: Option<i64>,
+    abr: Option<f64>,
+    has_audio: bool,
+    has_video: bool,
 }
 
 fn parse_formats_payload(raw: &Value) -> Result<FormatsPayload, String> {
@@ -214,26 +288,13 @@ fn parse_formats_payload(raw: &Value) -> Result<FormatsPayload, String> {
         .unwrap_or("")
         .to_string();
 
-    let mut formats: Vec<VideoFormat> = raw
+    let raw_formats: Vec<RawFormat> = raw
         .get("formats")
         .and_then(Value::as_array)
-        .map(|list| list.iter().filter_map(format_from_value).collect())
+        .map(|list| list.iter().filter_map(raw_format_from_value).collect())
         .unwrap_or_default();
 
-    // Highest quality first; among equal heights, prefer the ones that already include audio
-    // (no FFmpeg merge required to play/download them standalone).
-    formats.sort_by(|a, b| {
-        b.height
-            .unwrap_or(-1)
-            .cmp(&a.height.unwrap_or(-1))
-            .then(b.has_audio.cmp(&a.has_audio))
-    });
-    formats.dedup_by(|a, b| {
-        a.height == b.height
-            && a.ext == b.ext
-            && a.has_audio == b.has_audio
-            && a.has_video == b.has_video
-    });
+    let formats = curate_formats(&raw_formats);
 
     if formats.is_empty() {
         return Err("yt-dlp returned no usable formats for this URL".to_string());
@@ -247,9 +308,126 @@ fn parse_formats_payload(raw: &Value) -> Result<FormatsPayload, String> {
     })
 }
 
-/// Builds a `VideoFormat` from one entry of yt-dlp's `formats` array, or `None` if the entry
-/// isn't a useful downloadable format (storyboards, formats with neither audio nor video, ...).
-fn format_from_value(value: &Value) -> Option<VideoFormat> {
+/// Picks the best options for the popup:
+/// - up to 3 with video+audio (progressive or video+best-audio merge)
+/// - 1 best audio-only
+/// - up to 3 video-only
+fn curate_formats(raw: &[RawFormat]) -> Vec<VideoFormat> {
+    let mut progressive: Vec<&RawFormat> = raw
+        .iter()
+        .filter(|f| f.has_video && f.has_audio)
+        .collect();
+    let mut video_only: Vec<&RawFormat> = raw
+        .iter()
+        .filter(|f| f.has_video && !f.has_audio)
+        .collect();
+    let mut audio_only: Vec<&RawFormat> = raw
+        .iter()
+        .filter(|f| f.has_audio && !f.has_video)
+        .collect();
+
+    progressive.sort_by(|a, b| b.height.unwrap_or(-1).cmp(&a.height.unwrap_or(-1)));
+    video_only.sort_by(|a, b| b.height.unwrap_or(-1).cmp(&a.height.unwrap_or(-1)));
+    audio_only.sort_by(|a, b| {
+        b.abr
+            .unwrap_or(0.0)
+            .partial_cmp(&a.abr.unwrap_or(0.0))
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+
+    dedup_by_height(&mut progressive);
+    dedup_by_height(&mut video_only);
+
+    let best_audio = audio_only.first().copied();
+
+    let mut with_sound: Vec<VideoFormat> = Vec::new();
+    let mut used_heights = std::collections::HashSet::new();
+
+    for f in progressive.iter().take(3) {
+        if let Some(h) = f.height {
+            used_heights.insert(h);
+        }
+        with_sound.push(to_video_format(f, false));
+    }
+
+    if with_sound.len() < 3 {
+        if let Some(audio) = best_audio {
+            for v in video_only.iter() {
+                if with_sound.len() >= 3 {
+                    break;
+                }
+                if let Some(h) = v.height {
+                    if !used_heights.insert(h) {
+                        continue;
+                    }
+                }
+                with_sound.push(VideoFormat {
+                    format_id: format!("{}+{}", v.format_id, audio.format_id),
+                    label: match v.height {
+                        Some(h) => format!("{h}p {}+audio", v.ext),
+                        None => format!("{}+audio", v.ext),
+                    },
+                    ext: "mp4".to_string(),
+                    height: v.height,
+                    has_audio: true,
+                    has_video: true,
+                });
+            }
+        }
+    }
+
+    let mut out = with_sound;
+
+    if let Some(audio) = best_audio {
+        out.push(to_video_format(audio, true));
+    }
+
+    for v in video_only.iter().take(3) {
+        out.push(to_video_format(v, false));
+    }
+
+    out
+}
+
+fn dedup_by_height(list: &mut Vec<&RawFormat>) {
+    let mut seen = std::collections::HashSet::new();
+    list.retain(|f| match f.height {
+        Some(h) => seen.insert(h),
+        None => true,
+    });
+}
+
+fn to_video_format(f: &RawFormat, prefer_audio_label: bool) -> VideoFormat {
+    let label = if f.has_video && f.has_audio {
+        match f.height {
+            Some(h) => format!("{h}p {}", f.ext),
+            None => format!("video+audio {}", f.ext),
+        }
+    } else if f.has_video {
+        match f.height {
+            Some(h) => format!("{h}p {} (video only)", f.ext),
+            None => format!("video {}", f.ext),
+        }
+    } else if prefer_audio_label || f.has_audio {
+        match f.abr {
+            Some(abr) if abr > 0.0 => format!("audio {abr:.0}kbps {}", f.ext),
+            _ => format!("audio {}", f.ext),
+        }
+    } else {
+        f.ext.clone()
+    };
+
+    VideoFormat {
+        format_id: f.format_id.clone(),
+        label,
+        ext: f.ext.clone(),
+        height: f.height,
+        has_audio: f.has_audio,
+        has_video: f.has_video,
+    }
+}
+
+fn raw_format_from_value(value: &Value) -> Option<RawFormat> {
     let format_id = value.get("format_id").and_then(Value::as_str)?.to_string();
     let ext = value
         .get("ext")
@@ -258,7 +436,7 @@ fn format_from_value(value: &Value) -> Option<VideoFormat> {
         .to_string();
 
     if ext == "mhtml" {
-        return None; // storyboard thumbnail sprite, not a downloadable format
+        return None;
     }
 
     let vcodec = value.get("vcodec").and_then(Value::as_str).unwrap_or("none");
@@ -270,32 +448,11 @@ fn format_from_value(value: &Value) -> Option<VideoFormat> {
         return None;
     }
 
-    let height = value.get("height").and_then(Value::as_i64);
-
-    let label = if has_video {
-        match height {
-            Some(h) if has_audio => format!("{h}p {ext}"),
-            Some(h) => format!("{h}p {ext} (video only)"),
-            None => {
-                let note = value
-                    .get("format_note")
-                    .and_then(Value::as_str)
-                    .unwrap_or("video");
-                format!("{note} {ext}")
-            }
-        }
-    } else {
-        match value.get("abr").and_then(Value::as_f64) {
-            Some(abr) if abr > 0.0 => format!("audio {abr:.0}kbps {ext}"),
-            _ => format!("audio {ext}"),
-        }
-    };
-
-    Some(VideoFormat {
+    Some(RawFormat {
         format_id,
-        label,
         ext,
-        height,
+        height: value.get("height").and_then(Value::as_i64),
+        abr: value.get("abr").and_then(Value::as_f64),
         has_audio,
         has_video,
     })

@@ -1,15 +1,15 @@
 import { useEffect, useMemo, useState } from "react";
 import type { TrimRange, VideoFormat } from "@limbo/shared";
 import { formatTimecode, parseTimecode, validateTrim } from "@limbo/shared";
-import { getActiveYoutubeTab } from "../youtube-tab";
+import { getActiveVideoTab } from "../youtube-tab";
 import type { DownloadResult, FormatsResult, PopupRequest } from "../popup-messages";
 import TrimFields from "./TrimFields";
 import FormatList from "./FormatList";
 
 type TabState =
   | { status: "loading" }
-  | { status: "not-youtube" }
-  | { status: "youtube"; url: string };
+  | { status: "unsupported" }
+  | { status: "ready"; url: string };
 
 type FormatsState =
   | { status: "idle" }
@@ -33,6 +33,15 @@ function sendPopupMessage<T>(message: PopupRequest): Promise<T> {
   return chrome.runtime.sendMessage(message) as Promise<T>;
 }
 
+function defaultFormatId(formats: VideoFormat[]): string | null {
+  return (
+    formats.find((f) => f.hasVideo && f.hasAudio)?.formatId ??
+    formats.find((f) => f.hasAudio && !f.hasVideo)?.formatId ??
+    formats[0]?.formatId ??
+    null
+  );
+}
+
 export default function App() {
   const [tab, setTab] = useState<TabState>({ status: "loading" });
   const [formatsState, setFormatsState] = useState<FormatsState>({ status: "idle" });
@@ -44,11 +53,9 @@ export default function App() {
 
   useEffect(() => {
     let cancelled = false;
-    void getActiveYoutubeTab().then((result) => {
+    void getActiveVideoTab().then((result) => {
       if (cancelled) return;
-      setTab(
-        result.isYoutube ? { status: "youtube", url: result.url } : { status: "not-youtube" },
-      );
+      setTab(result.ok ? { status: "ready", url: result.url } : { status: "unsupported" });
     });
     return () => {
       cancelled = true;
@@ -56,7 +63,7 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (tab.status !== "youtube") return;
+    if (tab.status !== "ready") return;
     let cancelled = false;
     setFormatsState({ status: "loading" });
 
@@ -71,7 +78,7 @@ export default function App() {
             thumbnail: result.thumbnail,
             formats: result.formats,
           });
-          setSelectedFormatId(result.formats[0]?.formatId ?? null);
+          setSelectedFormatId(defaultFormatId(result.formats));
           setEndText(formatTimecode(result.duration));
         } else {
           setFormatsState({ status: "error", error: result.error });
@@ -119,7 +126,7 @@ export default function App() {
     downloadState.status !== "sending";
 
   async function handleDownload() {
-    if (tab.status !== "youtube" || selectedFormatId === null) return;
+    if (tab.status !== "ready" || selectedFormatId === null) return;
 
     setDownloadState({ status: "sending" });
     try {
@@ -150,13 +157,13 @@ export default function App() {
 
       {tab.status === "loading" && <p className="text-sm text-gray-500">Chargement…</p>}
 
-      {tab.status === "not-youtube" && (
+      {tab.status === "unsupported" && (
         <p className="text-sm text-gray-600">
-          Ouvrez une page YouTube (vidéo ou short) pour lancer un téléchargement.
+          Ouvrez une page vidéo (http/https) pour lancer un téléchargement.
         </p>
       )}
 
-      {tab.status === "youtube" && (
+      {tab.status === "ready" && (
         <>
           {formatsState.status === "loading" && (
             <p className="text-sm text-gray-500">Récupération des formats…</p>
@@ -169,18 +176,24 @@ export default function App() {
           {formatsState.status === "loaded" && (
             <>
               <div className="flex items-center gap-3">
-                <img
-                  src={formatsState.thumbnail}
-                  alt=""
-                  className="h-14 w-24 shrink-0 rounded object-cover"
-                />
+                {formatsState.thumbnail ? (
+                  <img
+                    src={formatsState.thumbnail}
+                    alt=""
+                    className="h-14 w-24 shrink-0 rounded object-cover"
+                  />
+                ) : (
+                  <div className="h-14 w-24 shrink-0 rounded bg-gray-200" />
+                )}
                 <div className="min-w-0">
                   <p className="truncate text-sm font-medium" title={formatsState.title}>
                     {formatsState.title}
                   </p>
-                  <p className="text-xs text-gray-400">
-                    {formatTimecode(formatsState.duration)}
-                  </p>
+                  {formatsState.duration > 0 && (
+                    <p className="text-xs text-gray-400">
+                      {formatTimecode(formatsState.duration)}
+                    </p>
+                  )}
                 </div>
               </div>
 

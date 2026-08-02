@@ -199,8 +199,7 @@ async fn handle_command(text: &str, runner: &JobRunner) -> Option<Value> {
                 Some(raw) => serde_json::from_value(raw.clone()).ok()?,
             };
 
-            // Reject before touching the queue: never spawn yt-dlp on an attacker/bug-supplied
-            // non-YouTube URL or an inverted/negative trim range (see `crate::validate`).
+            // Reject before touching the queue: require http(s) + sane trim (see `crate::validate`).
             match crate::validate::validate_download_request(&url, trim.as_ref()) {
                 Ok(()) => {
                     runner.create_download(url, format_id, trim);
