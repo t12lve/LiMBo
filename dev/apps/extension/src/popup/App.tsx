@@ -5,6 +5,7 @@ import { getActiveVideoTab } from "../youtube-tab";
 import type { DownloadResult, FormatsResult, PopupRequest } from "../popup-messages";
 import TrimFields from "./TrimFields";
 import FormatList from "./FormatList";
+import { getDefaultQuality, loadDefaultQualityFromStorage } from "../prefs";
 
 type TabState =
   | { status: "loading" }
@@ -34,6 +35,15 @@ function sendPopupMessage<T>(message: PopupRequest): Promise<T> {
 }
 
 function defaultFormatId(formats: VideoFormat[]): string | null {
+  const preferSound = getDefaultQuality() === "best_sound";
+  if (preferSound) {
+    return (
+      formats.find((f) => f.hasAudio && !f.hasVideo)?.formatId ??
+      formats.find((f) => f.hasVideo && f.hasAudio)?.formatId ??
+      formats[0]?.formatId ??
+      null
+    );
+  }
   return (
     formats.find((f) => f.hasVideo && f.hasAudio)?.formatId ??
     formats.find((f) => f.hasAudio && !f.hasVideo)?.formatId ??
@@ -53,6 +63,9 @@ export default function App() {
 
   useEffect(() => {
     let cancelled = false;
+    void loadDefaultQualityFromStorage().then(() => {
+      if (cancelled) return;
+    });
     void getActiveVideoTab().then((result) => {
       if (cancelled) return;
       setTab(result.ok ? { status: "ready", url: result.url } : { status: "unsupported" });

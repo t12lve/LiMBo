@@ -1,1 +1,20 @@
 @import "tailwindcss";
+
+:root {
+  --limbo-bg: #0c0608;
+  --limbo-panel: #14080c;
+  --limbo-crimson: #8a1830;
+  --limbo-border: #5a2030;
+  --limbo-gold: #e8c878;
+  --limbo-ivory: #f2e8e4;
+  --limbo-muted: #a08070;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  background: var(--limbo-bg);
+  color: var(--limbo-ivory);
+}

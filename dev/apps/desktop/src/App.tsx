@@ -1,9 +1,11 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
+import { invoke } from "@tauri-apps/api/core";
 import FirstRunGate from "./components/FirstRunGate";
+import AppShell from "./components/AppShell";
 import JobList from "./components/JobList";
-import PrefsBar from "./components/PrefsBar";
 import UrlBatch from "./components/UrlBatch";
+import type { JobSnapshot } from "@limbo/shared";
 
 function playFinishBeep() {
   try {
@@ -24,26 +26,44 @@ function playFinishBeep() {
 }
 
 function App() {
+  const [jobCount, setJobCount] = useState(0);
+
   useEffect(() => {
-    let unlisten: (() => void) | undefined;
+    let unlistenIdle: (() => void) | undefined;
+    let unlistenJobs: (() => void) | undefined;
+
     void listen<{ soundOnFinish?: boolean }>("queue-idle", (event) => {
       if (event.payload?.soundOnFinish !== false) {
         playFinishBeep();
       }
     }).then((fn) => {
-      unlisten = fn;
+      unlistenIdle = fn;
     });
-    return () => unlisten?.();
+
+    void invoke<JobSnapshot[]>("get_jobs_snapshot")
+      .then((jobs) => setJobCount(jobs.length))
+      .catch(() => {});
+
+    void listen<JobSnapshot>("job-updated", () => {
+      void invoke<JobSnapshot[]>("get_jobs_snapshot")
+        .then((jobs) => setJobCount(jobs.length))
+        .catch(() => {});
+    }).then((fn) => {
+      unlistenJobs = fn;
+    });
+
+    return () => {
+      unlistenIdle?.();
+      unlistenJobs?.();
+    };
   }, []);
 
   return (
     <FirstRunGate>
-      <main className="flex h-screen w-screen flex-col items-center gap-5 overflow-y-auto bg-neutral-950 p-8">
-        <h1 className="text-4xl font-bold tracking-tight text-white">LiMBo</h1>
-        <PrefsBar />
+      <AppShell jobCount={jobCount}>
         <UrlBatch />
         <JobList />
-      </main>
+      </AppShell>
     </FirstRunGate>
   );
 }

@@ -1,8 +1,19 @@
 {
   "manifest_version": 3,
   "name": "LiMBo",
-  "version": "0.1.1",
-  "action": { "default_popup": "src/popup/index.html", "default_title": "LiMBo" },
+  "version": "0.1.2",
+  "action": {
+    "default_popup": "src/popup/index.html",
+    "default_title": "LiMBo",
+    "default_icon": {
+      "32": "icons/icon-32.png",
+      "128": "icons/icon-128.png"
+    }
+  },
+  "icons": {
+    "32": "icons/icon-32.png",
+    "128": "icons/icon-128.png"
+  },
   "background": { "service_worker": "src/background.ts", "type": "module" },
   "permissions": ["storage", "tabs", "alarms", "cookies"],
   "host_permissions": [

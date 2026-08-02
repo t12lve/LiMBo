@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 
 type VideoRes = "best" | "2160" | "1440" | "1080" | "720" | "480";
@@ -37,15 +37,15 @@ function buildFormatId(item: PendingItem): string {
   return "bv*+ba/b";
 }
 
-function newItem(url: string): PendingItem {
+function newItem(url: string, soundOnlyDefault: boolean): PendingItem {
   return {
     id: crypto.randomUUID(),
     url,
     selected: true,
     videoRes: "best",
     videoFmt: "mp4",
-    withSound: true,
-    soundOnly: false,
+    withSound: !soundOnlyDefault,
+    soundOnly: soundOnlyDefault,
   };
 }
 
@@ -55,6 +55,13 @@ export default function UrlBatch() {
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [soundOnlyDefault, setSoundOnlyDefault] = useState(false);
+
+  useEffect(() => {
+    void invoke<{ default_quality?: string }>("get_app_config").then((cfg) => {
+      setSoundOnlyDefault(cfg.default_quality === "best_sound");
+    });
+  }, []);
 
   const selected = useMemo(() => items.filter((i) => i.selected), [items]);
 
@@ -67,7 +74,9 @@ export default function UrlBatch() {
 
     setItems((prev) => {
       const existing = new Set(prev.map((p) => p.url));
-      const added = urls.filter((u) => !existing.has(u)).map(newItem);
+      const added = urls
+        .filter((u) => !existing.has(u))
+        .map((u) => newItem(u, soundOnlyDefault));
       return [...prev, ...added];
     });
     setPaste("");

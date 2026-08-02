@@ -76,4 +76,28 @@ describe("isWsServerMessage", () => {
       }),
     ).toBe(false);
   });
+
+  it("accepts prefs.snapshot with a valid defaultQuality", () => {
+    expect(
+      isWsServerMessage({
+        type: "prefs.snapshot",
+        defaultQuality: "best_image",
+      }),
+    ).toBe(true);
+    expect(
+      isWsServerMessage({
+        type: "prefs.snapshot",
+        defaultQuality: "best_sound",
+      }),
+    ).toBe(true);
+  });
+
+  it("rejects prefs.snapshot with an invalid defaultQuality", () => {
+    expect(
+      isWsServerMessage({
+        type: "prefs.snapshot",
+        defaultQuality: "720p",
+      }),
+    ).toBe(false);
+  });
 });

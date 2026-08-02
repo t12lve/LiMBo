@@ -129,6 +129,16 @@ impl JobRunner {
         }
     }
 
+    /// Default quality preference for extension preselect (`best_image` | `best_sound`).
+    pub fn default_quality(&self) -> String {
+        let q = self.config.lock().unwrap().default_quality.clone();
+        if q == "best_sound" {
+            "best_sound".into()
+        } else {
+            "best_image".into()
+        }
+    }
+
     /// All known jobs for a freshly (re)connected client's `jobs.snapshot`.
     pub fn snapshot(&self) -> Vec<JobSnapshot> {
         self.state.lock().unwrap().jobs.clone()
@@ -317,7 +327,7 @@ impl JobRunner {
         let meta_browser = if use_browser { browser.clone() } else { None };
         let meta_cookies_path = cookies_file.clone();
         let meta = tokio::task::spawn_blocking(move || {
-            ytdlp::fetch_title_and_id(
+            ytdlp::fetch_meta(
                 &meta_url,
                 meta_browser.as_deref(),
                 meta_cookies_path.as_deref(),
@@ -326,8 +336,8 @@ impl JobRunner {
         .await
         .unwrap_or_else(|join_err| Err(format!("internal error: {join_err}")));
 
-        let (title, video_id) = match meta {
-            Ok(pair) => pair,
+        let meta = match meta {
+            Ok(m) => m,
             Err(error) => {
                 if let Some(path) = &cookies_file {
                     let _ = std::fs::remove_file(path);
@@ -336,17 +346,9 @@ impl JobRunner {
                 return;
             }
         };
-        self.update_job(&id, |job| job.title = title);
+        self.update_job(&id, |job| job.title = meta.title.clone());
 
-        if self.is_active_cancelled() {
-            if let Some(output_dir) = self.config.lock().unwrap().output_dir.clone() {
-                cleanup_partial_files(&output_dir, &video_id);
-            }
-            self.finish_error(&id, "cancelled".to_string());
-            return;
-        }
-
-        let output_dir = match self.config.lock().unwrap().output_dir.clone() {
+        let output_root = match self.config.lock().unwrap().output_dir.clone() {
             Some(dir) if !dir.trim().is_empty() => dir,
             _ => {
                 self.finish_error(&id, "no output directory configured".to_string());
@@ -354,8 +356,31 @@ impl JobRunner {
             }
         };
 
+        let platform = crate::paths::normalize_platform(&meta.extractor);
+        let mode = crate::paths::download_mode(&format_id, trim.is_some());
+        let stamp = chrono::Local::now().format("%Y%m%d-%H%M%S").to_string();
+        let sub = crate::paths::job_subdir(&platform, &meta.title, &meta.id);
+        let job_dir_path = crate::paths::job_dir(std::path::Path::new(&output_root), &sub);
+        if let Err(err) = std::fs::create_dir_all(&job_dir_path) {
+            self.finish_error(&id, format!("failed to create job directory: {err}"));
+            return;
+        }
+        let job_dir = job_dir_path.to_string_lossy().to_string();
+
+        let mut stem = crate::paths::output_filename_stem(&meta.title, &stamp, &mode, None);
+        let collision = job_dir_path.read_dir().ok().into_iter().flatten().flatten().any(|e| {
+            e.file_name()
+                .to_string_lossy()
+                .starts_with(&stem)
+        });
+        if collision {
+            let short: String = id.chars().take(4).collect();
+            stem = crate::paths::output_filename_stem(&meta.title, &stamp, &mode, Some(&short));
+        }
+        let output_template = crate::paths::build_output_template(&job_dir, &stem);
+
         if self.is_active_cancelled() {
-            cleanup_partial_files(&output_dir, &video_id);
+            cleanup_partial_files(&job_dir);
             self.finish_error(&id, "cancelled".to_string());
             return;
         }
@@ -365,7 +390,7 @@ impl JobRunner {
         let runner = self.clone();
         let job_id = id.clone();
         let download_url = url;
-        let download_output_dir = output_dir.clone();
+        let download_template = output_template.clone();
         let trim_secs = trim.map(|t| (t.start_sec, t.end_sec));
         let download_browser = if use_browser { browser } else { None };
         let download_cookies_path = cookies_file.clone();
@@ -374,7 +399,7 @@ impl JobRunner {
                 &job_id,
                 &download_url,
                 &format_id,
-                &download_output_dir,
+                &download_template,
                 trim_secs,
                 download_browser.as_deref(),
                 download_cookies_path.as_deref(),
@@ -390,7 +415,7 @@ impl JobRunner {
         let cancelled = self.state.lock().unwrap().active_cancelled;
 
         if cancelled {
-            cleanup_partial_files(&output_dir, &video_id);
+            cleanup_partial_files(&job_dir);
             self.finish_error(&id, "cancelled".to_string());
             return;
         }
@@ -428,7 +453,7 @@ impl JobRunner {
         id: &str,
         url: &str,
         format_id: &str,
-        output_dir: &str,
+        output_template: &str,
         trim: Option<(f64, f64)>,
         cookies_browser: Option<&str>,
         cookies_file: Option<&std::path::Path>,
@@ -445,7 +470,7 @@ impl JobRunner {
             let mut child = ytdlp::download(ytdlp::DownloadRequest {
                 url,
                 format_id,
-                output_dir,
+                output_template,
                 trim,
                 cookies_browser,
                 cookies_file,
@@ -561,16 +586,9 @@ fn job_progress_payload(snapshot: &JobSnapshot) -> Value {
     })
 }
 
-/// Removes leftover partial-download artifacts (`*.part`, `*.ytdl`, fragment `.part-Frag*` files)
-/// for `video_id` from `output_dir` after a cancelled job. Best-effort: a missing/unreadable
-/// directory or file is silently ignored.
-fn cleanup_partial_files(output_dir: &str, video_id: &str) {
-    if video_id.is_empty() {
-        return;
-    }
-    let marker = format!("[{video_id}]");
-
-    let Ok(entries) = std::fs::read_dir(output_dir) else {
+/// Removes leftover partial-download artifacts from a job subdirectory after cancel.
+fn cleanup_partial_files(job_dir: &str) {
+    let Ok(entries) = std::fs::read_dir(job_dir) else {
         return;
     };
 
@@ -579,9 +597,6 @@ fn cleanup_partial_files(output_dir: &str, video_id: &str) {
         let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
             continue;
         };
-        if !name.contains(&marker) {
-            continue;
-        }
         let is_partial =
             name.ends_with(".part") || name.ends_with(".ytdl") || name.contains(".part-Frag");
         if is_partial {

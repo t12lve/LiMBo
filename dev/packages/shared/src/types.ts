@@ -28,3 +28,6 @@ export type JobSnapshot = {
   eta: string;
   error?: string;
 };
+
+/** Desktop default quality preference synced to the extension via prefs.snapshot. */
+export type DefaultQuality = "best_image" | "best_sound";

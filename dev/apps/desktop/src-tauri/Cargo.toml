@@ -32,6 +32,8 @@ futures-util = "0.3"
 anyhow = "1"
 regex = "1"
 url = "2"
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+winreg = "0.52"
 
 # `limbo://open` is delivered as a CLI arg to a *new* process on Windows/Linux; the `deep-link`
 # feature lets the single-instance plugin forward that URL to the already-running instance

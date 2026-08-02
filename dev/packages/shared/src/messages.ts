@@ -1,4 +1,10 @@
-import type { JobPhase, JobSnapshot, TrimRange, VideoFormat } from "./types";
+import type {
+  DefaultQuality,
+  JobPhase,
+  JobSnapshot,
+  TrimRange,
+  VideoFormat,
+} from "./types";
 
 export type WsClientMessage =
   | { type: "hello" }
@@ -36,7 +42,8 @@ export type WsServerMessage =
     }
   | { type: "job.done"; job: JobSnapshot }
   | { type: "job.error"; job: JobSnapshot }
-  | { type: "jobs.snapshot"; jobs: JobSnapshot[] };
+  | { type: "jobs.snapshot"; jobs: JobSnapshot[] }
+  | { type: "prefs.snapshot"; defaultQuality: DefaultQuality };
 
 type JsonRecord = Record<string, unknown>;
 
@@ -166,6 +173,11 @@ export function isWsServerMessage(value: unknown): value is WsServerMessage {
       );
     case "jobs.snapshot":
       return Array.isArray(value.jobs) && value.jobs.every(isJobSnapshot);
+    case "prefs.snapshot":
+      return (
+        value.defaultQuality === "best_image" ||
+        value.defaultQuality === "best_sound"
+      );
     default:
       return false;
   }

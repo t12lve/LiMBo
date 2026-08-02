@@ -126,6 +126,12 @@ async fn handle_connection(
     }
 
     send_json(&mut write, json!({ "type": "auth.ok" })).await?;
+    let default_quality = runner.default_quality();
+    send_json(
+        &mut write,
+        json!({ "type": "prefs.snapshot", "defaultQuality": default_quality }),
+    )
+    .await?;
     send_json(
         &mut write,
         json!({ "type": "jobs.snapshot", "jobs": runner.snapshot() }),

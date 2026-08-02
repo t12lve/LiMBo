@@ -163,11 +163,17 @@ fn run_hidden(command: &mut Command) -> std::io::Result<std::process::Output> {
     command.output()
 }
 
-pub fn fetch_title_and_id(
+pub struct VideoMeta {
+    pub title: String,
+    pub id: String,
+    pub extractor: String,
+}
+
+pub fn fetch_meta(
     url: &str,
     cookies_browser: Option<&str>,
     cookies_file: Option<&Path>,
-) -> Result<(String, String), String> {
+) -> Result<VideoMeta, String> {
     let ytdlp = resolve_binary_path("yt-dlp.exe")?;
 
     let mut command = Command::new(&ytdlp);
@@ -178,6 +184,8 @@ pub fn fetch_title_and_id(
         "%(title)s",
         "--print",
         "%(id)s",
+        "--print",
+        "%(extractor)s",
         url,
     ]);
 
@@ -191,19 +199,21 @@ pub fn fetch_title_and_id(
     let mut lines = stdout.lines();
     let title = lines.next().unwrap_or("").trim().to_string();
     let id = lines.next().unwrap_or("").trim().to_string();
+    let extractor = lines.next().unwrap_or("").trim().to_string();
 
     if id.is_empty() {
         return Err("yt-dlp did not return a video id".to_string());
     }
 
-    Ok((
-        if title.is_empty() {
+    Ok(VideoMeta {
+        title: if title.is_empty() {
             "Untitled".to_string()
         } else {
             title
         },
         id,
-    ))
+        extractor,
+    })
 }
 
 fn decode_utf8(bytes: &[u8]) -> String {
@@ -234,7 +244,7 @@ fn seconds_to_timecode(sec: f64) -> String {
 pub struct DownloadRequest<'a> {
     pub url: &'a str,
     pub format_id: &'a str,
-    pub output_dir: &'a str,
+    pub output_template: &'a str,
     pub trim: Option<(f64, f64)>,
     pub cookies_browser: Option<&'a str>,
     pub cookies_file: Option<&'a Path>,
@@ -247,20 +257,14 @@ pub fn download(req: DownloadRequest) -> Result<Child, String> {
         .parent()
         .ok_or_else(|| "could not resolve ffmpeg.exe's parent directory".to_string())?;
 
-    let output_template = format!(
-        "{}/%(title).180B [%(id)s].%(ext)s",
-        req.output_dir.trim_end_matches(['/', '\\'])
-    );
-
     let mut command = Command::new(&ytdlp);
     apply_common_args(&mut command, req.cookies_browser, req.cookies_file);
     command
         .arg("-f")
         .arg(req.format_id)
         .arg("-o")
-        .arg(&output_template)
+        .arg(req.output_template)
         .arg("--newline")
-        .arg("--force-overwrites")
         .arg("--ffmpeg-location")
         .arg(ffmpeg_dir);
 

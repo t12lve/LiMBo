@@ -1,8 +1,10 @@
 mod config;
 mod job_runner;
+mod paths;
 mod power;
 mod progress_parse;
 mod protocol;
+mod startup;
 mod validate;
 mod ws_server;
 mod ytdlp;
@@ -100,6 +102,8 @@ struct PrefsUpdate {
     sound_on_finish: Option<bool>,
     post_queue_action: Option<String>,
     cookies_browser: Option<String>,
+    default_quality: Option<String>,
+    launch_at_startup: Option<bool>,
 }
 
 #[tauri::command]
@@ -122,6 +126,16 @@ fn update_prefs(state: State<ConfigState>, prefs: PrefsUpdate) -> Result<AppConf
             "edge" | "brave" | "firefox" | "none" | "chrome" => b,
             _ => "chrome".to_string(),
         };
+    }
+    if let Some(q) = prefs.default_quality {
+        config.default_quality = match q.as_str() {
+            "best_sound" => "best_sound".to_string(),
+            _ => "best_image".to_string(),
+        };
+    }
+    if let Some(v) = prefs.launch_at_startup {
+        config.launch_at_startup = v;
+        startup::set_launch_at_startup(v)?;
     }
     config::save(&config)?;
     Ok(config.clone())
@@ -171,6 +185,12 @@ pub fn run() {
             app.manage(ConfigState(config_state.clone()));
             let runner = ws_server::spawn(token, config_state, app.handle().clone());
             app.manage(runner);
+
+            if startup::args_request_minimized() {
+                if let Some(window) = app.get_webview_window("main") {
+                    let _ = window.minimize();
+                }
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

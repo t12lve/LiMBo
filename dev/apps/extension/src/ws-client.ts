@@ -15,6 +15,7 @@ import type { WsClientMessage, WsServerMessage } from "@limbo/shared";
 import { isWsServerMessage } from "@limbo/shared";
 import { updateBadge } from "./badge";
 import { flushQueue } from "./queue";
+import { setDefaultQuality } from "./prefs";
 
 const TOKEN_STORAGE_KEY = "limboToken";
 const LIMBO_OPEN_STORAGE_KEY = "limboOpenAt";
@@ -151,6 +152,9 @@ export async function send(msg: WsClientMessage): Promise<void> {
 }
 
 function dispatch(msg: WsServerMessage): void {
+  if (msg.type === "prefs.snapshot") {
+    setDefaultQuality(msg.defaultQuality);
+  }
   if (msg.type === "job.progress") {
     updateBadge(msg.percent);
   } else if (msg.type === "job.done" || msg.type === "job.error") {

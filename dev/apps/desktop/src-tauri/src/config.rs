@@ -12,6 +12,10 @@ fn default_cookies_browser() -> String {
     "chrome".to_string()
 }
 
+fn default_quality() -> String {
+    "best_image".to_string()
+}
+
 /// What to do when the download queue becomes idle (last job finished).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
@@ -37,6 +41,12 @@ pub struct AppConfig {
     /// Browser name for `yt-dlp --cookies-from-browser` (`chrome`/`edge`/`brave`/`none`).
     #[serde(default = "default_cookies_browser")]
     pub cookies_browser: String,
+    /// Default quality preference for batch + extension preselect.
+    #[serde(default = "default_quality")]
+    pub default_quality: String,
+    /// Launch LiMBo minimized when Windows starts.
+    #[serde(default)]
+    pub launch_at_startup: bool,
 }
 
 pub struct ConfigState(pub Arc<Mutex<AppConfig>>);
@@ -73,6 +83,8 @@ pub fn load_or_init() -> Result<AppConfig, String> {
         sound_on_finish: true,
         post_queue_action: PostQueueAction::None,
         cookies_browser: default_cookies_browser(),
+        default_quality: default_quality(),
+        launch_at_startup: false,
     };
     save(&config)?;
     Ok(config)

@@ -9,12 +9,14 @@
     "beforeBuildCommand": "pnpm build",
     "frontendDist": "../dist"
   },
-  "app": {
+    "app": {
     "windows": [
       {
+        "label": "main",
         "title": "LiMBo",
-        "width": 800,
-        "height": 600
+        "width": 440,
+        "height": 680,
+        "resizable": false
       }
     ],
     "security": {
