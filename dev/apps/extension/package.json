@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "build:prod": "node ../../scripts/build-extension.mjs"
   },
   "dependencies": {
     "@limbo/shared": "workspace:*",

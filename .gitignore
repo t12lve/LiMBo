@@ -4,3 +4,7 @@
 
 # yt-dlp/ffmpeg sidecars are large and platform-specific; fetch via dev/scripts/fetch-binaries.mjs
 prod/bin/*.exe
+
+# Build outputs (`cd dev && pnpm build`) — regenerated locally, not committed.
+/prod/extension/
+/prod/desktop/
