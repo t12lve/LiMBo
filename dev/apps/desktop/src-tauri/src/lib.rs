@@ -10,12 +10,18 @@ mod ws_server;
 mod ytdlp;
 
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use config::{AppConfig, ConfigState, PostQueueAction};
 use job_runner::JobRunner;
-use tauri::{Manager, State};
+use tauri::menu::{Menu, MenuItem};
+use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
+use tauri::{Manager, State, WindowEvent};
 use tauri_plugin_deep_link::DeepLinkExt;
+
+/// When false, window close (✕ / Alt+F4 / taskbar Close) hides to the tray instead of exiting.
+static ALLOW_EXIT: AtomicBool = AtomicBool::new(false);
 
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
 #[tauri::command]
@@ -166,6 +172,12 @@ fn encode_batch_format_id(format_id: &str) -> String {
     }
 }
 
+#[tauri::command]
+fn quit_app(app: tauri::AppHandle) {
+    ALLOW_EXIT.store(true, Ordering::SeqCst);
+    app.exit(0);
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let mut builder = tauri::Builder::default();
@@ -185,6 +197,14 @@ pub fn run() {
         .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
+        .on_window_event(|window, event| {
+            if let WindowEvent::CloseRequested { api, .. } = event {
+                if !ALLOW_EXIT.load(Ordering::SeqCst) {
+                    api.prevent_close();
+                    let _ = window.hide();
+                }
+            }
+        })
         .setup(|app| {
             // Dev builds aren't installed, so the OS doesn't know about the `limbo` scheme yet;
             // register it at runtime. Release builds get this for free from the bundler/installer.
@@ -211,6 +231,38 @@ pub fn run() {
             let runner = ws_server::spawn(token, config_state, app.handle().clone());
             app.manage(runner);
 
+            let show_item = MenuItem::with_id(app, "show", "Afficher LiMBo", true, None::<&str>)?;
+            let quit_item = MenuItem::with_id(app, "quit", "Quitter", true, None::<&str>)?;
+            let tray_menu = Menu::with_items(app, &[&show_item, &quit_item])?;
+            let tray_icon = app
+                .default_window_icon()
+                .cloned()
+                .ok_or_else(|| "missing default window icon for tray".to_string())?;
+
+            TrayIconBuilder::new()
+                .icon(tray_icon)
+                .menu(&tray_menu)
+                .tooltip("LiMBo")
+                .on_menu_event(|app, event| match event.id.as_ref() {
+                    "show" => protocol::focus_main_window(app),
+                    "quit" => {
+                        ALLOW_EXIT.store(true, Ordering::SeqCst);
+                        app.exit(0);
+                    }
+                    _ => {}
+                })
+                .on_tray_icon_event(|tray, event| {
+                    if let TrayIconEvent::Click {
+                        button: MouseButton::Left,
+                        button_state: MouseButtonState::Up,
+                        ..
+                    } = event
+                    {
+                        protocol::focus_main_window(tray.app_handle());
+                    }
+                })
+                .build(app)?;
+
             if startup::args_request_minimized() {
                 if let Some(window) = app.get_webview_window("main") {
                     let _ = window.minimize();
@@ -226,7 +278,8 @@ pub fn run() {
             get_jobs_snapshot,
             cancel_job,
             enqueue_urls,
-            update_prefs
+            update_prefs,
+            quit_app
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
