@@ -16,7 +16,8 @@
         "title": "LiMBo",
         "width": 440,
         "height": 680,
-        "resizable": false
+        "resizable": false,
+        "decorations": false
       }
     ],
     "security": {

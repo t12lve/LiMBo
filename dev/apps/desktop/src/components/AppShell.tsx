@@ -1,5 +1,6 @@
 import { useState, type ReactNode } from "react";
 import SettingsDrawer from "./SettingsDrawer";
+import WindowControls from "./WindowControls";
 
 type Props = {
   children: ReactNode;
@@ -36,16 +37,19 @@ export default function AppShell({ children, jobCount = 0 }: Props) {
         }}
       />
 
-      <header className="relative z-10 flex shrink-0 items-center justify-between border-b border-[var(--limbo-border)] bg-[var(--limbo-panel)]/90 px-3 py-2.5">
-        <div className="flex items-center gap-2">
+      <header
+        className="relative z-10 flex shrink-0 items-center justify-between border-b border-[var(--limbo-border)] bg-[var(--limbo-panel)]/90 py-1.5 pl-3 pr-1"
+        data-tauri-drag-region
+      >
+        <div className="flex items-center gap-2" data-tauri-drag-region>
           <SteppingDisc />
           <span className="text-sm font-bold tracking-[0.14em] text-[var(--limbo-gold)]">
             LIMBO
           </span>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-1">
           {jobCount > 0 && (
-            <span className="text-[10px] uppercase tracking-wider text-[var(--limbo-muted)]">
+            <span className="mr-1 text-[10px] uppercase tracking-wider text-[var(--limbo-muted)]">
               file · {jobCount}
             </span>
           )}
@@ -58,6 +62,7 @@ export default function AppShell({ children, jobCount = 0 }: Props) {
           >
             ⚙
           </button>
+          <WindowControls />
         </div>
       </header>
 

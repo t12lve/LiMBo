@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 
 type PostQueueAction = "none" | "sleep" | "shutdown" | "force_shutdown";
 type DefaultQuality = "best_image" | "best_sound";
@@ -187,6 +188,21 @@ export default function SettingsDrawer({ open: isOpen, onClose }: Props) {
           navigateur » sert au collage Desktop (ferme Edge sinon erreur cookie
           database — le message dit souvent « Chrome » même pour Edge).
         </p>
+
+        <p className="text-[10px] leading-snug text-[var(--limbo-muted)]">
+          La croix réduit LiMBo dans la barre des tâches. Pour quitter : clic droit
+          sur l’icône → Fermer la fenêtre.
+        </p>
+
+        <button
+          type="button"
+          onClick={() => {
+            void getCurrentWindow().close();
+          }}
+          className="mt-1 rounded border border-[var(--limbo-crimson)] px-2 py-1.5 text-[var(--limbo-ivory)] hover:bg-[var(--limbo-crimson)]"
+        >
+          Quitter LiMBo
+        </button>
 
         {saved && <span className="text-[var(--limbo-gold)]">Enregistré</span>}
       </aside>

@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import { useEffect, useState, type ReactNode } from "react";
+import WindowControls from "./WindowControls";
 
 interface AppConfig {
   token: string;
@@ -11,10 +12,28 @@ interface FirstRunGateProps {
   children: ReactNode;
 }
 
-function FirstRunGate({ children }: FirstRunGateProps) {
-  const [outputDir, setOutputDir] = useState<string | null | undefined>(
-    undefined,
+function GateChrome({ children }: { children: ReactNode }) {
+  return (
+    <main className="flex h-screen w-screen flex-col overflow-hidden bg-[var(--limbo-bg)] text-[var(--limbo-ivory)]">
+      <div
+        className="flex shrink-0 items-center justify-between border-b border-[var(--limbo-border)] bg-[var(--limbo-panel)] py-1.5 pl-3 pr-1"
+        data-tauri-drag-region
+      >
+        <span
+          className="text-sm font-bold tracking-[0.14em] text-[var(--limbo-gold)]"
+          data-tauri-drag-region
+        >
+          LIMBO
+        </span>
+        <WindowControls />
+      </div>
+      <div className="flex flex-1 flex-col items-center justify-center gap-4 p-6">{children}</div>
+    </main>
   );
+}
+
+function FirstRunGate({ children }: FirstRunGateProps) {
+  const [outputDir, setOutputDir] = useState<string | null | undefined>(undefined);
   const [error, setError] = useState<string | null>(null);
   const [isPicking, setIsPicking] = useState(false);
 
@@ -50,46 +69,44 @@ function FirstRunGate({ children }: FirstRunGateProps) {
 
   if (error && outputDir === undefined) {
     return (
-      <main className="flex h-screen w-screen flex-col items-center justify-center gap-4 bg-neutral-950">
+      <GateChrome>
         <p className="text-sm text-red-400">{error}</p>
         <button
           type="button"
           onClick={() => void loadConfig()}
-          className="rounded-md bg-white px-4 py-2 font-medium text-neutral-950 transition hover:bg-neutral-200"
+          className="rounded-md bg-[var(--limbo-gold)] px-4 py-2 font-medium text-[var(--limbo-bg)] transition hover:opacity-90"
         >
           Réessayer
         </button>
-      </main>
+      </GateChrome>
     );
   }
 
   if (outputDir === undefined) {
     return (
-      <main className="flex h-screen w-screen items-center justify-center bg-neutral-950">
-        <p className="text-neutral-400">Chargement...</p>
-      </main>
+      <GateChrome>
+        <p className="text-[var(--limbo-muted)]">Chargement...</p>
+      </GateChrome>
     );
   }
 
   if (outputDir === null) {
     return (
-      <main className="flex h-screen w-screen flex-col items-center justify-center gap-4 bg-neutral-950">
-        <h1 className="text-2xl font-semibold text-white">
-          Bienvenue sur LiMBo
-        </h1>
-        <p className="text-neutral-400">
+      <GateChrome>
+        <h1 className="text-2xl font-semibold text-[var(--limbo-gold)]">Bienvenue sur LiMBo</h1>
+        <p className="text-center text-[var(--limbo-muted)]">
           Choisissez le dossier où seront enregistrées vos vidéos.
         </p>
         <button
           type="button"
-          onClick={handleChooseFolder}
+          onClick={() => void handleChooseFolder()}
           disabled={isPicking}
-          className="rounded-md bg-white px-4 py-2 font-medium text-neutral-950 transition hover:bg-neutral-200 disabled:opacity-50"
+          className="rounded-md bg-[var(--limbo-gold)] px-4 py-2 font-medium text-[var(--limbo-bg)] transition hover:opacity-90 disabled:opacity-50"
         >
           {isPicking ? "Sélection..." : "Choisir le dossier"}
         </button>
         {error && <p className="text-sm text-red-400">{error}</p>}
-      </main>
+      </GateChrome>
     );
   }
 
