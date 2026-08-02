@@ -1,5 +1,6 @@
 mod config;
 mod job_runner;
+mod power;
 mod progress_parse;
 mod protocol;
 mod validate;
@@ -9,7 +10,7 @@ mod ytdlp;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
-use config::{AppConfig, ConfigState};
+use config::{AppConfig, ConfigState, PostQueueAction};
 use job_runner::JobRunner;
 use tauri::{Manager, State};
 use tauri_plugin_deep_link::DeepLinkExt;
@@ -93,6 +94,39 @@ fn enqueue_urls(
     Ok(count)
 }
 
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PrefsUpdate {
+    sound_on_finish: Option<bool>,
+    post_queue_action: Option<String>,
+    cookies_browser: Option<String>,
+}
+
+#[tauri::command]
+fn update_prefs(state: State<ConfigState>, prefs: PrefsUpdate) -> Result<AppConfig, String> {
+    let mut config = state.0.lock().unwrap();
+    if let Some(v) = prefs.sound_on_finish {
+        config.sound_on_finish = v;
+    }
+    if let Some(raw) = prefs.post_queue_action {
+        config.post_queue_action = match raw.as_str() {
+            "sleep" => PostQueueAction::Sleep,
+            "shutdown" => PostQueueAction::Shutdown,
+            "force_shutdown" => PostQueueAction::ForceShutdown,
+            _ => PostQueueAction::None,
+        };
+    }
+    if let Some(browser) = prefs.cookies_browser {
+        let b = browser.trim().to_ascii_lowercase();
+        config.cookies_browser = match b.as_str() {
+            "edge" | "brave" | "firefox" | "none" | "chrome" => b,
+            _ => "chrome".to_string(),
+        };
+    }
+    config::save(&config)?;
+    Ok(config.clone())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let mut builder = tauri::Builder::default();
@@ -146,7 +180,8 @@ pub fn run() {
             set_output_dir,
             get_jobs_snapshot,
             cancel_job,
-            enqueue_urls
+            enqueue_urls,
+            update_prefs
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

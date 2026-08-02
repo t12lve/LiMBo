@@ -176,9 +176,12 @@ async fn handle_command(text: &str, runner: &JobRunner) -> Option<Value> {
     match msg_type(&value) {
         Some("formats.list") => {
             let url = value.get("url").and_then(Value::as_str)?.to_string();
-            let result = tokio::task::spawn_blocking(move || crate::ytdlp::list_formats(&url))
-                .await
-                .unwrap_or_else(|join_err| Err(format!("internal error: {join_err}")));
+            let cookies = runner.cookies_browser();
+            let result = tokio::task::spawn_blocking(move || {
+                crate::ytdlp::list_formats(&url, cookies.as_deref())
+            })
+            .await
+            .unwrap_or_else(|join_err| Err(format!("internal error: {join_err}")));
 
             Some(match result {
                 Ok(payload) => json!({

@@ -27,6 +27,8 @@ use crate::ytdlp;
 /// Tauri event name emitted to the desktop frontend on every job mutation, mirroring the WS
 /// `job.*` broadcasts. Payload is a single [`JobSnapshot`].
 pub const JOB_UPDATED_EVENT: &str = "job-updated";
+/// Emitted when the queue becomes idle after at least one job finished in this cycle.
+pub const QUEUE_IDLE_EVENT: &str = "queue-idle";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -112,6 +114,17 @@ impl JobRunner {
         });
 
         runner
+    }
+
+    /// Browser name for yt-dlp cookies, if configured.
+    pub fn cookies_browser(&self) -> Option<String> {
+        let cfg = self.config.lock().unwrap();
+        let b = cfg.cookies_browser.trim().to_string();
+        if b.is_empty() || b.eq_ignore_ascii_case("none") {
+            None
+        } else {
+            Some(b)
+        }
     }
 
     /// All known jobs for a freshly (re)connected client's `jobs.snapshot`.
@@ -247,9 +260,28 @@ impl JobRunner {
 
             self.clone().run_job(job).await;
 
-            let mut state = self.state.lock().unwrap();
-            state.active_id = None;
-            state.active_child = None;
+            let queue_empty = {
+                let mut state = self.state.lock().unwrap();
+                state.active_id = None;
+                state.active_child = None;
+                state.queue.is_empty()
+            };
+
+            if queue_empty {
+                let (action, sound) = {
+                    let cfg = self.config.lock().unwrap();
+                    (cfg.post_queue_action, cfg.sound_on_finish)
+                };
+                let _ = self.app_handle.emit(
+                    QUEUE_IDLE_EVENT,
+                    serde_json::json!({ "soundOnFinish": sound }),
+                );
+                if action != crate::config::PostQueueAction::None {
+                    if let Err(err) = crate::power::run_post_queue_action(action) {
+                        eprintln!("post_queue_action failed: {err}");
+                    }
+                }
+            }
         }
     }
 
@@ -263,10 +295,20 @@ impl JobRunner {
 
         self.set_phase(&id, JobPhase::FetchingMeta);
 
+        let cookies = self.config.lock().unwrap().cookies_browser.clone();
+        let cookies_opt = if cookies.eq_ignore_ascii_case("none") || cookies.trim().is_empty() {
+            None
+        } else {
+            Some(cookies)
+        };
+
         let meta_url = url.clone();
-        let meta = tokio::task::spawn_blocking(move || ytdlp::fetch_title_and_id(&meta_url))
-            .await
-            .unwrap_or_else(|join_err| Err(format!("internal error: {join_err}")));
+        let meta_cookies = cookies_opt.clone();
+        let meta = tokio::task::spawn_blocking(move || {
+            ytdlp::fetch_title_and_id(&meta_url, meta_cookies.as_deref())
+        })
+        .await
+        .unwrap_or_else(|join_err| Err(format!("internal error: {join_err}")));
 
         let (title, video_id) = match meta {
             Ok(pair) => pair,
@@ -371,11 +413,22 @@ impl JobRunner {
                 return Err("cancelled".to_string());
             }
 
+            let cookies = {
+                let cfg = self.config.lock().unwrap();
+                let b = cfg.cookies_browser.trim().to_string();
+                if b.is_empty() || b.eq_ignore_ascii_case("none") {
+                    None
+                } else {
+                    Some(b)
+                }
+            };
+
             let mut child = ytdlp::download(ytdlp::DownloadRequest {
                 url,
                 format_id,
                 output_dir,
                 trim,
+                cookies_browser: cookies.as_deref(),
             })?;
             let stdout = child.stdout.take();
             let stderr = child.stderr.take();

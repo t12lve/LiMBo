@@ -98,8 +98,8 @@ fn hide_window(command: &mut Command) {
     }
 }
 
-/// Shared flags for every yt-dlp invocation (encoding, Windows-safe names, JS runtime).
-fn apply_common_args(command: &mut Command) {
+/// Shared flags for every yt-dlp invocation (encoding, Windows-safe names, JS runtime, cookies).
+fn apply_common_args(command: &mut Command, cookies_browser: Option<&str>) {
     command.arg("--encoding").arg("utf-8");
     command.arg("--windows-filenames");
     command.arg("--no-playlist");
@@ -109,10 +109,17 @@ fn apply_common_args(command: &mut Command) {
         command.arg("--js-runtimes").arg(runtime);
     }
 
-    // Ensure Node is findable even when Tauri's PATH is minimal.
     if let Some(node) = resolve_node_path() {
         if let Some(dir) = node.parent() {
             prepend_path_env(command, dir);
+        }
+    }
+
+    if let Some(browser) = cookies_browser {
+        let b = browser.trim().to_ascii_lowercase();
+        if !b.is_empty() && b != "none" {
+            // Needed for Instagram / some Twitter / logged-in sites.
+            command.arg("--cookies-from-browser").arg(b);
         }
     }
 }
@@ -132,11 +139,11 @@ fn run_hidden(command: &mut Command) -> std::io::Result<std::process::Output> {
     command.output()
 }
 
-pub fn fetch_title_and_id(url: &str) -> Result<(String, String), String> {
+pub fn fetch_title_and_id(url: &str, cookies_browser: Option<&str>) -> Result<(String, String), String> {
     let ytdlp = resolve_binary_path("yt-dlp.exe")?;
 
     let mut command = Command::new(&ytdlp);
-    apply_common_args(&mut command);
+    apply_common_args(&mut command, cookies_browser);
     command.args([
         "--skip-download",
         "--print",
@@ -202,6 +209,7 @@ pub struct DownloadRequest<'a> {
     pub format_id: &'a str,
     pub output_dir: &'a str,
     pub trim: Option<(f64, f64)>,
+    pub cookies_browser: Option<&'a str>,
 }
 
 pub fn download(req: DownloadRequest) -> Result<Child, String> {
@@ -217,7 +225,7 @@ pub fn download(req: DownloadRequest) -> Result<Child, String> {
     );
 
     let mut command = Command::new(&ytdlp);
-    apply_common_args(&mut command);
+    apply_common_args(&mut command, req.cookies_browser);
     command
         .arg("-f")
         .arg(req.format_id)
@@ -246,11 +254,11 @@ pub fn download(req: DownloadRequest) -> Result<Child, String> {
         .map_err(|e| format!("failed to spawn yt-dlp: {e}"))
 }
 
-pub fn list_formats(url: &str) -> Result<FormatsPayload, String> {
+pub fn list_formats(url: &str, cookies_browser: Option<&str>) -> Result<FormatsPayload, String> {
     let ytdlp = resolve_binary_path("yt-dlp.exe")?;
 
     let mut command = Command::new(&ytdlp);
-    apply_common_args(&mut command);
+    apply_common_args(&mut command, cookies_browser);
     command.args(["-J", url]);
 
     let output = run_hidden(&mut command).map_err(|e| format!("failed to spawn yt-dlp: {e}"))?;
@@ -376,10 +384,52 @@ fn curate_formats(raw: &[RawFormat]) -> Vec<VideoFormat> {
         }
     }
 
+    // Sites like Twitter often expose only video tracks in -J; fall back to yt-dlp selectors
+    // that merge best video + best audio at download time.
+    if with_sound.is_empty() && !video_only.is_empty() {
+        for v in video_only.iter().take(3) {
+            let (format_id, label) = match v.height {
+                Some(h) => (
+                    format!("bv*[height<={h}]+ba/b"),
+                    format!("{h}p avec son"),
+                ),
+                None => ("bv*+ba/b".to_string(), "Meilleure qualité avec son".to_string()),
+            };
+            with_sound.push(VideoFormat {
+                format_id,
+                label,
+                ext: "mp4".to_string(),
+                height: v.height,
+                has_audio: true,
+                has_video: true,
+            });
+        }
+    }
+
+    if with_sound.is_empty() {
+        with_sound.push(VideoFormat {
+            format_id: "bv*+ba/b".to_string(),
+            label: "Meilleure qualité avec son".to_string(),
+            ext: "mp4".to_string(),
+            height: None,
+            has_audio: true,
+            has_video: true,
+        });
+    }
+
     let mut out = with_sound;
 
     if let Some(audio) = best_audio {
         out.push(to_video_format(audio, true));
+    } else {
+        out.push(VideoFormat {
+            format_id: "ba/b".to_string(),
+            label: "Meilleur audio seul".to_string(),
+            ext: "m4a".to_string(),
+            height: None,
+            has_audio: true,
+            has_video: false,
+        });
     }
 
     for v in video_only.iter().take(3) {
