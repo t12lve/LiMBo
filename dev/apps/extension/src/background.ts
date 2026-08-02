@@ -12,8 +12,27 @@
 // kept small so that migration wouldn't require touching its callers.
 import { connectAndAuth } from "./ws-client";
 import { flushQueue } from "./queue";
+import { requestDownload, requestFormats } from "./popup-handlers";
+import { isPopupRequest } from "./popup-messages";
 
 console.log("LiMBo SW");
+
+// Popup -> SW messaging (see `popup-messages.ts`): `sendResponse` is called
+// asynchronously in both cases, hence returning `true` to keep the channel
+// open per the `chrome.runtime.onMessage` contract.
+chrome.runtime.onMessage.addListener((message: unknown, _sender, sendResponse) => {
+  if (!isPopupRequest(message)) {
+    return false;
+  }
+
+  if (message.type === "popup.formats") {
+    void requestFormats(message.url).then(sendResponse);
+    return true;
+  }
+
+  void requestDownload(message.payload).then(sendResponse);
+  return true;
+});
 
 const RECONNECT_ALARM = "limbo-ws-reconnect";
 
