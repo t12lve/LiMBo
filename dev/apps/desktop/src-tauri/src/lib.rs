@@ -1,4 +1,5 @@
 mod config;
+mod ws_server;
 
 use std::path::Path;
 use std::sync::Mutex;
@@ -50,7 +51,10 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             let config = config::load_or_init().expect("failed to load or init app config");
+            let token = config.token.clone();
             app.manage(ConfigState(Mutex::new(config)));
+            let job_tx = ws_server::spawn(token);
+            app.manage(job_tx);
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
