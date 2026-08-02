@@ -16,20 +16,19 @@ if (platform() === "win32") {
 }
 
 const desktopRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
-const isWindows = platform() === "win32";
-const tauriCmd = isWindows
-  ? join(desktopRoot, "node_modules", ".bin", "tauri.cmd")
-  : join(desktopRoot, "node_modules", ".bin", "tauri");
+const tauriCli = join(
+  desktopRoot,
+  "node_modules",
+  "@tauri-apps",
+  "cli",
+  "tauri.js",
+);
 
 const args = process.argv.slice(2);
-// On Windows, spawning a .cmd file requires shell: true (Node refuses to spawn
-// .cmd/.bat directly with shell: false — https://nodejs.org/en/blog/vulnerability/cve-2024-27980).
-// Quote the command since the repo path may contain spaces (shell mode joins
-// file+args into a single string without auto-quoting).
-const child = spawn(isWindows ? `"${tauriCmd}"` : tauriCmd, args, {
+const child = spawn(process.execPath, [tauriCli, ...args], {
   stdio: "inherit",
   env,
-  shell: isWindows,
+  shell: false,
 });
 
 child.on("exit", (code, signal) => {

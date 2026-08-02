@@ -18,10 +18,18 @@ function FirstRunGate({ children }: FirstRunGateProps) {
   const [error, setError] = useState<string | null>(null);
   const [isPicking, setIsPicking] = useState(false);
 
+  const loadConfig = async () => {
+    setError(null);
+    try {
+      const config = await invoke<AppConfig>("get_app_config");
+      setOutputDir(config.output_dir);
+    } catch (e) {
+      setError(String(e));
+    }
+  };
+
   useEffect(() => {
-    invoke<AppConfig>("get_app_config")
-      .then((config) => setOutputDir(config.output_dir))
-      .catch((e) => setError(String(e)));
+    void loadConfig();
   }, []);
 
   const handleChooseFolder = async () => {
@@ -39,6 +47,21 @@ function FirstRunGate({ children }: FirstRunGateProps) {
       setIsPicking(false);
     }
   };
+
+  if (error && outputDir === undefined) {
+    return (
+      <main className="flex h-screen w-screen flex-col items-center justify-center gap-4 bg-neutral-950">
+        <p className="text-sm text-red-400">{error}</p>
+        <button
+          type="button"
+          onClick={() => void loadConfig()}
+          className="rounded-md bg-white px-4 py-2 font-medium text-neutral-950 transition hover:bg-neutral-200"
+        >
+          Réessayer
+        </button>
+      </main>
+    );
+  }
 
   if (outputDir === undefined) {
     return (
