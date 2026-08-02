@@ -1,0 +1,9 @@
+{
+  "name": "limbo",
+  "private": true,
+  "packageManager": "pnpm@9.15.0",
+  "scripts": {
+    "build": "node scripts/build-all.mjs",
+    "test": "pnpm -r test"
+  }
+}
