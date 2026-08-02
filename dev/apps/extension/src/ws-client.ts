@@ -17,6 +17,7 @@ import { updateBadge } from "./badge";
 import { flushQueue } from "./queue";
 
 const TOKEN_STORAGE_KEY = "limboToken";
+const LIMBO_OPEN_STORAGE_KEY = "limboOpenAt";
 const CONNECT_TIMEOUT_MS = 3000;
 const LIMBO_OPEN_COOLDOWN_MS = 5000;
 
@@ -114,13 +115,14 @@ export function connectAndAuth(): Promise<void> {
     });
 
     ws.addEventListener("close", () => {
+      const wasAuthenticated = socket === ws && authenticated;
       if (socket === ws) {
         socket = null;
       }
-      const wasAuthenticated = authenticated;
       authenticated = false;
       if (wasAuthenticated) {
         console.warn("[LiMBo] ws-client: connection closed");
+        void openDesktopIfNeeded();
       }
       settle(() => {
         maybeOpenLimboFallback();
@@ -176,11 +178,31 @@ function parseServerMessage(data: unknown): WsServerMessage | null {
 
 /** Opens the desktop app via the `limbo://open` deep link, at most once per cooldown window. */
 function maybeOpenLimboFallback(): void {
+  void openDesktopIfNeeded();
+}
+
+async function openDesktopIfNeeded(): Promise<void> {
   const now = Date.now();
   if (now - lastLimboOpenAt < LIMBO_OPEN_COOLDOWN_MS) {
     return;
   }
   lastLimboOpenAt = now;
+
+  try {
+    const stored = await chrome.storage.session.get(LIMBO_OPEN_STORAGE_KEY);
+    const persistedAt = stored[LIMBO_OPEN_STORAGE_KEY];
+    if (
+      typeof persistedAt === "number" &&
+      now - persistedAt < LIMBO_OPEN_COOLDOWN_MS
+    ) {
+      lastLimboOpenAt = persistedAt;
+      return;
+    }
+    await chrome.storage.session.set({ [LIMBO_OPEN_STORAGE_KEY]: now });
+  } catch (err) {
+    console.warn("[LiMBo] ws-client: failed to persist limbo:// cooldown", err);
+  }
+
   console.warn("[LiMBo] ws-client: desktop unreachable, opening", PROTOCOL_URL);
   chrome.tabs.create({ url: PROTOCOL_URL }).catch((err) => {
     console.warn("[LiMBo] ws-client: failed to open limbo:// fallback", err);
