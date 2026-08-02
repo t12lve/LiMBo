@@ -3,7 +3,7 @@
 **Date:** 2026-08-02  
 **Status:** Approved (brainstorming)  
 **Parent:** `2026-08-02-limbo-design.md`  
-**Scope:** Naming/path anti-écrasement, menu Réglages, démarrage Windows minimisé, icône fort contraste
+**Scope:** Naming/path anti-écrasement, menu Réglages, démarrage Windows minimisé, UI Darkchylde (fenêtre fixe + tiroir), icône fort contraste
 
 ## 1. Problème
 
@@ -19,7 +19,10 @@
 | Nom fichier | `{titre}_{YYYYMMDD-HHMMSS}_{mode}.{ext}` |
 | Défaut qualité | `Meilleure image` \| `Meilleur son` — batch Desktop **et** pré-sélection extension |
 | Démarrage Windows | Fenêtre créée puis **minimisée** (pas tray, pas headless) |
-| Icône | Fort contraste, lien avec « limbo » (monogramme L / seuil) |
+| Thème UI | **Darkchylde** — cour de Limbo (Magik) : cramoisi + or, disque concentrique |
+| Fenêtre | Taille **fixe** (~440×680), non redimensionnable ; corps **scrollable** |
+| Réglages UX | Tiroir / panneau latéral overlay (⚙), pas barre prefs permanente |
+| Icône | Disque concentrique or/cramoisi (Stepping Disc) + contraste fort |
 
 ## 3. Chemins de sortie
 
@@ -56,9 +59,17 @@
 - Jobs successifs même vidéo → même dossier, fichiers distincts.
 - Cleanup annulation : limité au `job_dir` du job (plus le glob `[id]` à la racine seule).
 
-## 4. Menu Réglages (Desktop)
+## 4. UI Desktop — Darkchylde + fenêtre fixe
 
-Remplace / absorbe `PrefsBar` dans un panneau **Réglages** :
+**Inspiration :** Limbo de Magik (Illyana) — cour démoniaque, Stepping Discs, Darkchylde. Pas de violet « AI default » : fond quasi-noir lie-de-vin, accents **cramoisi** `#8a1830` / `#5a2030`, or `#e8c878`, texte ivoire.
+
+**Fenêtre (Tauri) :**
+- Taille fixe ≈ **440×680** (`resizable: false`).
+- Header fixe : marque LIMBO (disque) + bouton ⚙ + compteur file optionnel.
+- Corps unique scrollable : collage de liens + file d’attente.
+- Footer discret optionnel (« Cour de Limbo » / statut WS).
+
+**Réglages :** tiroir latéral droit (overlay assombri). Ferme au clic hors panneau ou Échap. Remplace / absorbe `PrefsBar` :
 
 | Champ | Config | Notes |
 |-------|--------|--------|
@@ -88,8 +99,8 @@ Hors scope : tray icon, mode service headless.
 ## 6. Icône
 
 - Remplacer les assets Desktop + extension.
-- Contraintes : lisible 16–32 px, fort contraste (clair sur sombre ou inverse), motif lié à « limbo » (lettre **L** stylisée et/ou seuil / porte entre-deux).
-- Pas de dégradé violet générique ; style flat simple.
+- Motif : **Stepping Disc** (anneaux concentriques) or sur disque cramoisi / fond sombre — lisible 16–32 px.
+- Style flat, fort contraste ; pas de dégradé violet générique.
 
 ## 7. Changements techniques (aperçu)
 
@@ -98,7 +109,8 @@ Hors scope : tray icon, mode service headless.
 | `config.rs` | `default_quality`, `launch_at_startup` |
 | `ytdlp.rs` / `job_runner.rs` | Calcul `job_dir` + template nommé ; mode depuis `format_id` + trim ; meta extractor pour plateforme |
 | `lib.rs` | Prefs update, `set_launch_at_startup`, parse `--minimized` |
-| UI Desktop | Panneau Réglages ; UrlBatch lit `default_quality` |
+| UI Desktop | Thème Darkchylde ; fenêtre fixe ; tiroir Réglages ; UrlBatch lit `default_quality` |
+| `tauri.conf` | `width`/`height` fixes, `resizable: false` |
 | Extension | Pré-sélection format selon `prefs.snapshot` |
 | Shared | Message `prefs.snapshot` (+ type `DefaultQuality`) |
 | Assets | Nouvelles icônes |
@@ -118,3 +130,5 @@ Hors scope : tray icon, mode service headless.
 4. Extension pré-sélectionne selon `default_quality`.
 5. Au login Windows avec startup ON : LiMBo démarre **minimisé**.
 6. Nouvelle icône visible dans la barre des tâches et l’extension.
+7. Fenêtre non redimensionnable ; file longue → scroll interne, header/⚙ restent accessibles.
+8. ⚙ ouvre le tiroir Réglages ; fermeture overlay / Échap.
