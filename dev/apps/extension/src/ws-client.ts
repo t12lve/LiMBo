@@ -10,7 +10,10 @@
 // the SW lifetime for as long as a WebSocket stays open. If that proves
 // unreliable in practice, move this module behind an offscreen document
 // (see the note in `background.ts`) without changing its public API.
-import { WS_URL, PROTOCOL_URL } from "@limbo/shared";
+//
+// Cold-start: the extension does NOT open limbo:// tabs (avoids a blank page).
+// Keep LiMBo Desktop running via Windows startup + tray instead.
+import { WS_URL } from "@limbo/shared";
 import type { WsClientMessage, WsServerMessage } from "@limbo/shared";
 import { isWsServerMessage } from "@limbo/shared";
 import { updateBadge } from "./badge";
@@ -18,16 +21,13 @@ import { flushQueue } from "./queue";
 import { setDefaultQuality } from "./prefs";
 
 const TOKEN_STORAGE_KEY = "limboToken";
-const LIMBO_OPEN_STORAGE_KEY = "limboOpenAt";
 const CONNECT_TIMEOUT_MS = 3000;
-const LIMBO_OPEN_COOLDOWN_MS = 5000;
 
 type ServerMessageHandler = (msg: WsServerMessage) => void;
 
 let socket: WebSocket | null = null;
 let authenticated = false;
 let inFlight: Promise<void> | null = null;
-let lastLimboOpenAt = 0;
 
 const messageHandlers = new Set<ServerMessageHandler>();
 
@@ -65,7 +65,7 @@ export function connectAndAuth(): Promise<void> {
     try {
       ws = new WebSocket(WS_URL);
     } catch (err) {
-      maybeOpenLimboFallback();
+      logDesktopUnreachable();
       reject(toError(err));
       return;
     }
@@ -73,7 +73,7 @@ export function connectAndAuth(): Promise<void> {
     timeoutId = setTimeout(() => {
       ws.close();
       settle(() => {
-        maybeOpenLimboFallback();
+        logDesktopUnreachable();
         reject(new Error("connectAndAuth: timed out waiting for auth.ok"));
       });
     }, CONNECT_TIMEOUT_MS);
@@ -105,7 +105,7 @@ export function connectAndAuth(): Promise<void> {
       if (parsed.type === "auth.fail") {
         console.warn("[LiMBo] ws-client: auth.fail", parsed.error);
         settle(() => {
-          maybeOpenLimboFallback();
+          logDesktopUnreachable();
           reject(new Error(`connectAndAuth: auth failed (${parsed.error})`));
         });
         ws.close();
@@ -123,17 +123,16 @@ export function connectAndAuth(): Promise<void> {
       authenticated = false;
       if (wasAuthenticated) {
         console.warn("[LiMBo] ws-client: connection closed");
-        void openDesktopIfNeeded();
+        logDesktopUnreachable();
       }
       settle(() => {
-        maybeOpenLimboFallback();
         reject(new Error("connectAndAuth: connection closed before auth.ok"));
       });
     });
 
     ws.addEventListener("error", () => {
       settle(() => {
-        maybeOpenLimboFallback();
+        logDesktopUnreachable();
         reject(new Error("connectAndAuth: websocket error"));
       });
     });
@@ -180,67 +179,10 @@ function parseServerMessage(data: unknown): WsServerMessage | null {
   return isWsServerMessage(parsed) ? parsed : null;
 }
 
-/** Opens the desktop app via the `limbo://open` deep link, at most once per cooldown window. */
-function maybeOpenLimboFallback(): void {
-  void openDesktopIfNeeded();
-}
-
-async function openDesktopIfNeeded(): Promise<void> {
-  const now = Date.now();
-  if (now - lastLimboOpenAt < LIMBO_OPEN_COOLDOWN_MS) {
-    return;
-  }
-  lastLimboOpenAt = now;
-
-  try {
-    const stored = await chrome.storage.session.get(LIMBO_OPEN_STORAGE_KEY);
-    const persistedAt = stored[LIMBO_OPEN_STORAGE_KEY];
-    if (
-      typeof persistedAt === "number" &&
-      now - persistedAt < LIMBO_OPEN_COOLDOWN_MS
-    ) {
-      lastLimboOpenAt = persistedAt;
-      return;
-    }
-    await chrome.storage.session.set({ [LIMBO_OPEN_STORAGE_KEY]: now });
-  } catch (err) {
-    console.warn("[LiMBo] ws-client: failed to persist limbo:// cooldown", err);
-  }
-
-  console.warn("[LiMBo] ws-client: desktop unreachable, opening", PROTOCOL_URL);
-  try {
-    const storedTab = await chrome.storage.session.get("limboTabId");
-    const existingId =
-      typeof storedTab.limboTabId === "number" ? storedTab.limboTabId : null;
-
-    let tabId: number | null = null;
-    if (existingId !== null) {
-      try {
-        await chrome.tabs.update(existingId, { url: PROTOCOL_URL, active: false });
-        tabId = existingId;
-      } catch {
-        tabId = null;
-      }
-    }
-
-    if (tabId === null) {
-      const tab = await chrome.tabs.create({ url: PROTOCOL_URL, active: false });
-      tabId = tab.id ?? null;
-      if (tabId !== null) {
-        await chrome.storage.session.set({ limboTabId: tabId });
-      }
-    }
-
-    if (tabId !== null) {
-      const idToClose = tabId;
-      setTimeout(() => {
-        chrome.tabs.remove(idToClose).catch(() => {});
-        void chrome.storage.session.remove("limboTabId");
-      }, 1200);
-    }
-  } catch (err) {
-    console.warn("[LiMBo] ws-client: failed to open limbo:// fallback", err);
-  }
+function logDesktopUnreachable(): void {
+  console.warn(
+    "[LiMBo] ws-client: Desktop injoignable — lance LiMBo (idéal : démarrage Windows + tray). Pas d’ouverture limbo://.",
+  );
 }
 
 function toError(err: unknown): Error {

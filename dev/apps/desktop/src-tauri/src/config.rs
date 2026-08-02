@@ -44,8 +44,8 @@ pub struct AppConfig {
     /// Default quality preference for batch + extension preselect.
     #[serde(default = "default_quality")]
     pub default_quality: String,
-    /// Launch LiMBo minimized when Windows starts.
-    #[serde(default)]
+    /// Launch LiMBo minimized when Windows starts (recommended: extension no longer opens limbo://).
+    #[serde(default = "default_true")]
     pub launch_at_startup: bool,
 }
 
@@ -84,7 +84,7 @@ pub fn load_or_init() -> Result<AppConfig, String> {
         post_queue_action: PostQueueAction::None,
         cookies_browser: default_cookies_browser(),
         default_quality: default_quality(),
-        launch_at_startup: false,
+        launch_at_startup: true,
     };
     save(&config)?;
     Ok(config)

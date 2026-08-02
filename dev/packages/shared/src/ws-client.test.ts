@@ -31,8 +31,6 @@ class MockWebSocket {
 
 const session: Record<string, unknown> = {};
 const tabsCreate = vi.fn().mockResolvedValue({ id: 42 });
-const tabsUpdate = vi.fn().mockResolvedValue({ id: 42 });
-const tabsRemove = vi.fn().mockResolvedValue(undefined);
 
 function installChromeMock(): void {
   vi.stubGlobal("chrome", {
@@ -46,11 +44,11 @@ function installChromeMock(): void {
         }),
       },
     },
-    tabs: { create: tabsCreate, update: tabsUpdate, remove: tabsRemove },
+    tabs: { create: tabsCreate },
   });
 }
 
-describe("ws-client fallback", () => {
+describe("ws-client offline", () => {
   beforeEach(() => {
     vi.resetModules();
     vi.clearAllMocks();
@@ -60,7 +58,7 @@ describe("ws-client fallback", () => {
     vi.stubGlobal("WebSocket", MockWebSocket);
   });
 
-  test("opens Limbo after a WebSocket closes post-authentication", async () => {
+  test("does not open limbo:// tabs when the WebSocket closes post-authentication", async () => {
     const { connectAndAuth } = await import("../../../apps/extension/src/ws-client");
     const connected = connectAndAuth();
     const ws = MockWebSocket.instances[0];
@@ -69,32 +67,21 @@ describe("ws-client fallback", () => {
     await connected;
 
     ws.emit("close");
+    await new Promise((resolve) => setTimeout(resolve, 20));
 
-    await vi.waitFor(() =>
-      expect(tabsCreate).toHaveBeenCalledWith({ url: "limbo://open", active: false }),
-    );
+    expect(tabsCreate).not.toHaveBeenCalled();
   });
 
-  test("uses the persisted cooldown after a service worker restart", async () => {
-    const { connectAndAuth } = await import("../../../apps/extension/src/ws-client");
-    const connected = connectAndAuth();
-    const ws = MockWebSocket.instances[0];
-    ws.emit("open");
-    ws.emit("message", JSON.stringify({ type: "auth.ok" }));
-    await connected;
-    ws.emit("close");
-    await vi.waitFor(() => expect(tabsCreate).toHaveBeenCalledTimes(1));
-
-    vi.resetModules();
+  test("does not open limbo:// when the desktop is offline", async () => {
     vi.stubGlobal("WebSocket", class {
       constructor() {
         throw new Error("desktop offline");
       }
     });
-    const restartedClient = await import("../../../apps/extension/src/ws-client");
+    const { connectAndAuth } = await import("../../../apps/extension/src/ws-client");
 
-    await expect(restartedClient.connectAndAuth()).rejects.toThrow("desktop offline");
+    await expect(connectAndAuth()).rejects.toThrow("desktop offline");
     await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(tabsCreate).toHaveBeenCalledTimes(1);
+    expect(tabsCreate).not.toHaveBeenCalled();
   });
 });

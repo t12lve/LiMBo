@@ -179,8 +179,13 @@ export default function SettingsDrawer({ open: isOpen, onClose }: Props) {
               void persist({ launchAtStartup: e.target.checked });
             }}
           />
-          Lancer au démarrage Windows (minimisé)
+          Lancer au démarrage Windows (recommandé)
         </label>
+
+        <p className="text-[10px] leading-snug text-[var(--limbo-muted)]">
+          L’extension n’ouvre plus limbo:// (plus de page blanche). Garde LiMBo
+          lancé au démarrage : l’icône reste dans la zone de notification.
+        </p>
 
         <p className="text-[10px] leading-snug text-[var(--limbo-muted)]">
           L’extension envoie ses cookies sans fermer le navigateur. « Cookies

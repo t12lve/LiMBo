@@ -41,8 +41,8 @@ export async function enqueueDraft(draft: DraftJob): Promise<void> {
   connectAndAuth()
     .then(() => flushQueue())
     .catch(() => {
-      // Stays queued in storage.session; connectAndAuth already handled the
-      // limbo:// fallback and this will be retried on the next reconnect.
+  // Stays queued in storage.session; will be retried on the next reconnect
+  // once LiMBo Desktop is running (no limbo:// cold-start from the extension).
     });
 }
 
