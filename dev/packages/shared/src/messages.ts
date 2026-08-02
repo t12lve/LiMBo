@@ -57,16 +57,48 @@ function hasString(value: JsonRecord, key: string): boolean {
   return typeof value[key] === "string";
 }
 
+function isFiniteNumber(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value);
+}
+
 function isTrimRange(value: unknown): value is TrimRange {
   return (
     isRecord(value) &&
-    typeof value.startSec === "number" &&
-    typeof value.endSec === "number"
+    isFiniteNumber(value.startSec) &&
+    isFiniteNumber(value.endSec) &&
+    value.startSec >= 0 &&
+    value.endSec > value.startSec
   );
 }
 
 function isJobPhase(value: unknown): value is JobPhase {
   return typeof value === "string" && JOB_PHASES.has(value as JobPhase);
+}
+
+function isVideoFormat(value: unknown): value is VideoFormat {
+  return (
+    isRecord(value) &&
+    hasString(value, "formatId") &&
+    hasString(value, "label") &&
+    hasString(value, "ext") &&
+    (value.height === null || isFiniteNumber(value.height)) &&
+    typeof value.hasAudio === "boolean" &&
+    typeof value.hasVideo === "boolean"
+  );
+}
+
+function isJobSnapshot(value: unknown): value is JobSnapshot {
+  return (
+    isRecord(value) &&
+    hasString(value, "id") &&
+    hasString(value, "url") &&
+    hasString(value, "title") &&
+    isJobPhase(value.phase) &&
+    isFiniteNumber(value.percent) &&
+    hasString(value, "speed") &&
+    hasString(value, "eta") &&
+    (value.error === undefined || typeof value.error === "string")
+  );
 }
 
 export function isWsClientMessage(value: unknown): value is WsClientMessage {
@@ -110,24 +142,25 @@ export function isWsServerMessage(value: unknown): value is WsServerMessage {
     case "formats.result":
       return (
         Array.isArray(value.formats) &&
+        value.formats.every(isVideoFormat) &&
         hasString(value, "title") &&
-        typeof value.duration === "number" &&
+        isFiniteNumber(value.duration) &&
         hasString(value, "thumbnail")
       );
     case "job.created":
     case "job.done":
     case "job.error":
-      return isRecord(value.job);
+      return isJobSnapshot(value.job);
     case "job.progress":
       return (
         hasString(value, "id") &&
-        typeof value.percent === "number" &&
+        isFiniteNumber(value.percent) &&
         hasString(value, "speed") &&
         hasString(value, "eta") &&
         isJobPhase(value.phase)
       );
     case "jobs.snapshot":
-      return Array.isArray(value.jobs);
+      return Array.isArray(value.jobs) && value.jobs.every(isJobSnapshot);
     default:
       return false;
   }
