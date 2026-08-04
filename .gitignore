@@ -8,3 +8,4 @@ prod/bin/*.exe
 # Build outputs (`cd dev && pnpm build`) — regenerated locally, not committed.
 /prod/extension/
 /prod/desktop/
+/prod/premiere/

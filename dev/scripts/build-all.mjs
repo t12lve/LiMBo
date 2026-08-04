@@ -30,5 +30,6 @@ if (haveBinaries) {
 
 run("build-extension.mjs");
 run("build-desktop.mjs");
+run("build-premiere.mjs");
 
 console.log("build-all: done");

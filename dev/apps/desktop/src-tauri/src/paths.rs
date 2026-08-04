@@ -178,6 +178,32 @@ pub fn job_dir(output_root: &Path, subdir: &str) -> PathBuf {
     output_root.join(subdir)
 }
 
+/// After yt-dlp finishes, find the media file matching `stem` (largest non-partial).
+pub fn resolve_output_file(job_dir: &Path, stem: &str) -> Option<PathBuf> {
+    let Ok(entries) = std::fs::read_dir(job_dir) else {
+        return None;
+    };
+    let mut matches: Vec<(u64, PathBuf)> = entries
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.is_file())
+        .filter(|p| {
+            let name = p.file_name().and_then(|n| n.to_str()).unwrap_or("");
+            name.starts_with(stem)
+                && !name.ends_with(".part")
+                && !name.ends_with(".ytdl")
+                && !name.contains(".part-Frag")
+                && !name.ends_with(".temp")
+        })
+        .map(|p| {
+            let len = p.metadata().map(|m| m.len()).unwrap_or(0);
+            (len, p)
+        })
+        .collect();
+    matches.sort_by(|a, b| b.0.cmp(&a.0));
+    matches.into_iter().next().map(|(_, p)| p)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -246,5 +272,23 @@ mod tests {
     fn template_uses_stem() {
         let t = build_output_template(r"C:\Downloads\Instagram Foo [id]", "Foo_20260802-190000_combo");
         assert!(t.ends_with(r"\Foo_20260802-190000_combo.%(ext)s") || t.contains("Foo_20260802-190000_combo.%(ext)s"));
+    }
+
+    #[test]
+    fn resolve_picks_largest_matching_file() {
+        let dir = std::env::temp_dir().join(format!(
+            "limbo_resolve_{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_millis()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let stem = "clip_20260101-120000_combo";
+        std::fs::write(dir.join(format!("{stem}.mp4.part")), b"tiny").unwrap();
+        std::fs::write(dir.join(format!("{stem}.mp4")), b"0123456789abcdef").unwrap();
+        let found = resolve_output_file(&dir, stem).unwrap();
+        assert_eq!(found.file_name().unwrap(), format!("{stem}.mp4").as_str());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

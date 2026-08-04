@@ -27,6 +27,10 @@ export type JobSnapshot = {
   speed: string;
   eta: string;
   error?: string;
+  /** Absolute path of the finished file (when phase is done). */
+  outputPath?: string;
+  /** Download mode used in the filename: combo | son | video | *_trimmed */
+  mode?: string;
 };
 
 /** Desktop default quality preference synced to the extension via prefs.snapshot. */

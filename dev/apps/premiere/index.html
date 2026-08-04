@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="fr">
+  <head>
+    <meta charset="UTF-8" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+    <title>LiMBO-premiere</title>
+    <link rel="stylesheet" href="css/panel.css" />
+  </head>
+  <body>
+    <div class="shell">
+      <header class="header">
+        <img class="logo" src="icons/logo.png" width="28" height="28" alt="" />
+        <span class="brand">LiMBO-premiere</span>
+      </header>
+
+      <div class="status-row">
+        <span id="status-dot" class="dot off" aria-hidden="true"></span>
+        <span id="status-text">Desktop hors ligne</span>
+      </div>
+
+      <label class="auto-row">
+        <input type="checkbox" id="auto-import" />
+        <span>Auto-import à la fin du téléchargement</span>
+      </label>
+
+      <section class="jobs" aria-label="File de téléchargements">
+        <div id="jobs-empty" class="empty">Aucun job — lance un téléchargement depuis Chrome ou le Desktop.</div>
+        <ul id="jobs-list" class="jobs-list" hidden></ul>
+      </section>
+
+      <p id="log" class="log" role="status"></p>
+      <footer class="footer">COUR DE LIMBO · WS 127.0.0.1:4567</footer>
+    </div>
+
+    <script src="js/CSInterface.js"></script>
+    <script src="js/panel.js"></script>
+  </body>
+</html>

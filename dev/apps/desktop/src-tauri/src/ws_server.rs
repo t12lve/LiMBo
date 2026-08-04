@@ -26,7 +26,8 @@
 //! before `hello`) unless the request's `Origin` header is one of:
 //!   - absent entirely — non-browser clients (our Node smoke scripts, `curl`, ...) don't send one;
 //!   - `chrome-extension://<any-id>` — the extension's own service worker/offscreen document;
-//!   - `http://127.0.0.1...` / `http://localhost...` (any port) — local dev tooling / test pages.
+//!   - `http://127.0.0.1...` / `http://localhost...` (any port) — local dev tooling / test pages;
+//!   - `null` / `file://...` — Adobe CEP panels (Premiere Pro) load as file-backed HTML.
 //! Anything else (in particular any `https://` origin, i.e. a real website) is rejected, since a
 //! legitimate extension or local script never presents one of those.
 
@@ -304,10 +305,13 @@ fn check_origin(request: &Request, response: Response) -> Result<Response, Error
 fn is_allowed_origin(origin: Option<&str>) -> bool {
     match origin {
         None => true,
+        // CEP panels often send the literal string "null" (opaque origin).
+        Some("null") => true,
         Some(origin) => {
             origin.starts_with("chrome-extension://")
                 || origin.starts_with("http://127.0.0.1")
                 || origin.starts_with("http://localhost")
+                || origin.starts_with("file://")
         }
     }
 }
@@ -339,8 +343,9 @@ mod tests {
     }
 
     #[test]
-    fn rejects_null_origin() {
-        assert!(!is_allowed_origin(Some("null")));
+    fn allows_cep_null_and_file_origins() {
+        assert!(is_allowed_origin(Some("null")));
+        assert!(is_allowed_origin(Some("file:///C:/extensions/panel.html")));
     }
 
     #[test]

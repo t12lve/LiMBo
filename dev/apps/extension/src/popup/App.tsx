@@ -171,7 +171,16 @@ export default function App() {
 
   return (
     <div className="flex w-80 flex-col gap-3 p-4">
-      <h1 className="text-lg font-semibold">LiMBo</h1>
+      <header className="flex items-center gap-2.5">
+        <img
+          src={chrome.runtime.getURL("icons/icon-32.png")}
+          alt=""
+          width={28}
+          height={28}
+          className="h-7 w-7 shrink-0 rounded"
+        />
+        <h1 className="text-lg font-semibold tracking-wide">LiMBo</h1>
+      </header>
 
       {tab.status === "loading" && <p className="text-sm text-gray-500">Chargement…</p>}
 

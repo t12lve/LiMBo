@@ -60,6 +60,10 @@ pub struct JobSnapshot {
     pub eta: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    #[serde(rename = "outputPath", skip_serializing_if = "Option::is_none")]
+    pub output_path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mode: Option<String>,
 }
 
 struct QueuedJob {
@@ -176,6 +180,8 @@ impl JobRunner {
             speed: String::new(),
             eta: String::new(),
             error: None,
+            output_path: None,
+            mode: None,
         };
 
         {
@@ -212,6 +218,8 @@ impl JobRunner {
             speed: String::new(),
             eta: String::new(),
             error: Some(error),
+            output_path: None,
+            mode: None,
         };
 
         self.state.lock().unwrap().jobs.push(snapshot.clone());
@@ -437,9 +445,13 @@ impl JobRunner {
 
         match result {
             Ok(()) => {
+                let output_path = crate::paths::resolve_output_file(&job_dir_path, &stem)
+                    .map(|p| p.to_string_lossy().to_string());
                 if let Some(snapshot) = self.update_job(&id, |job| {
                     job.phase = JobPhase::Done;
                     job.percent = 100.0;
+                    job.output_path = output_path;
+                    job.mode = Some(mode.clone());
                 }) {
                     self.broadcast(json!({ "type": "job.done", "job": snapshot }));
                     self.emit_job_updated(&snapshot);

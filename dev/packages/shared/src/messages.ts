@@ -107,7 +107,9 @@ function isJobSnapshot(value: unknown): value is JobSnapshot {
     isFiniteNumber(value.percent) &&
     hasString(value, "speed") &&
     hasString(value, "eta") &&
-    (value.error === undefined || typeof value.error === "string")
+    (value.error === undefined || typeof value.error === "string") &&
+    (value.outputPath === undefined || typeof value.outputPath === "string") &&
+    (value.mode === undefined || typeof value.mode === "string")
   );
 }
 
