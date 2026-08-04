@@ -1,13 +1,14 @@
 {
   "name": "@limbo/extension",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.2.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
-    "build:prod": "node ../../scripts/build-extension.mjs"
+    "build:prod": "node ../../scripts/build-extension.mjs",
+    "pack:chrome": "node ../../scripts/build-extension.mjs && node ../../scripts/pack-chrome-extension.mjs"
   },
   "dependencies": {
     "@limbo/shared": "workspace:*",

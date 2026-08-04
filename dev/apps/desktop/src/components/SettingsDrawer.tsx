@@ -23,7 +23,7 @@ export default function SettingsDrawer({ open: isOpen, onClose }: Props) {
   const [outputDir, setOutputDir] = useState<string>("");
   const [sound, setSound] = useState(true);
   const [action, setAction] = useState<PostQueueAction>("none");
-  const [cookies, setCookies] = useState("edge");
+  const [cookies, setCookies] = useState("none");
   const [quality, setQuality] = useState<DefaultQuality>("best_image");
   const [startup, setStartup] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -34,7 +34,7 @@ export default function SettingsDrawer({ open: isOpen, onClose }: Props) {
       setOutputDir(cfg.output_dir ?? "");
       setSound(cfg.sound_on_finish ?? true);
       setAction(cfg.post_queue_action ?? "none");
-      setCookies(cfg.cookies_browser ?? "chrome");
+      setCookies(cfg.cookies_browser ?? "none");
       setQuality(cfg.default_quality === "best_sound" ? "best_sound" : "best_image");
       setStartup(cfg.launch_at_startup ?? false);
     });
@@ -132,11 +132,11 @@ export default function SettingsDrawer({ open: isOpen, onClose }: Props) {
             }}
             className="rounded border border-[var(--limbo-border)] bg-black/40 px-2 py-1.5 text-[var(--limbo-ivory)]"
           >
+            <option value="none">Aucun (recommandé)</option>
             <option value="chrome">Chrome</option>
             <option value="edge">Edge</option>
             <option value="brave">Brave</option>
             <option value="firefox">Firefox</option>
-            <option value="none">Aucun</option>
           </select>
         </label>
 
@@ -188,9 +188,10 @@ export default function SettingsDrawer({ open: isOpen, onClose }: Props) {
         </p>
 
         <p className="text-[10px] leading-snug text-[var(--limbo-muted)]">
-          L’extension envoie ses cookies sans fermer le navigateur. « Cookies
-          navigateur » sert au collage Desktop (ferme Edge sinon erreur cookie
-          database — le message dit souvent « Chrome » même pour Edge).
+          L’extension envoie ses cookies sans fermer le navigateur. Pour le
+          collage Desktop, laisse « Aucun » : Chrome/Edge ouverts bloquent
+          souvent la copie cookies (« Could not copy »). Si besoin, ferme le
+          navigateur avant d’activer Chrome/Edge ici.
         </p>
 
         <p className="text-[10px] leading-snug text-[var(--limbo-muted)]">

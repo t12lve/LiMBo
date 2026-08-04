@@ -9,3 +9,8 @@ prod/bin/*.exe
 /prod/extension/
 /prod/desktop/
 /prod/premiere/
+/prod/chrome/
+/prod/*.zip
+*.pem
+*.crx
+

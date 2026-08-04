@@ -158,6 +158,15 @@ code {
   animation: rise 0.85s ease 0.34s both;
 }
 
+.hero-meta {
+  margin: 1rem auto 0;
+  max-width: 28rem;
+  font-size: 0.78rem;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  animation: rise 0.85s ease 0.42s both;
+}
+
 .btn {
   display: inline-flex;
   align-items: center;

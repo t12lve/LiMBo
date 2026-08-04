@@ -80,6 +80,7 @@ pnpm build
 | Cible | Commande |
 |-------|----------|
 | Extension | `pnpm --filter @limbo/extension build:prod` ou `node scripts/build-extension.mjs` |
+| Pack Chrome (.crx/.zip) | `pnpm --filter @limbo/extension pack:chrome` → `prod/chrome/` |
 | Desktop | `pnpm --filter @limbo/desktop build:prod` ou `node scripts/build-desktop.mjs` |
 | Premiere | `pnpm --filter @limbo/premiere build` ou `node scripts/build-premiere.mjs` |
 | Sidecars seuls | `node scripts/fetch-binaries.mjs` (`--force` pour forcer) |
@@ -410,4 +411,6 @@ Scripts utilitaires dans `dev/scripts/` :
 
 ## Licence / statut
 
-Projet privé / en développement (`private: true` dans les packages). Version Desktop `0.1.0` · manifest extension `0.1.2` · panneau Premiere `0.1.0`.
+Projet open source en développement (`private: true` dans les packages npm).  
+Version courante **0.2.0** (Desktop · extension · Premiere · shared).  
+Historique : [`CHANGELOG.md`](./CHANGELOG.md).

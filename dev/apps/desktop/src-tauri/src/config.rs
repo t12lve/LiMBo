@@ -9,7 +9,9 @@ fn default_true() -> bool {
 }
 
 fn default_cookies_browser() -> String {
-    "chrome".to_string()
+    // Prefer none: `--cookies-from-browser` fails while Chrome/Edge is open ("Could not copy").
+    // Authenticated downloads should use the extension's Netscape cookie jar.
+    "none".to_string()
 }
 
 fn default_quality() -> String {

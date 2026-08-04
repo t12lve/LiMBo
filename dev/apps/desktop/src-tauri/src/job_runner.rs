@@ -349,8 +349,8 @@ impl JobRunner {
         let meta_url = url.clone();
         let meta_browser = if use_browser { browser.clone() } else { None };
         let meta_cookies_path = cookies_file.clone();
-        let meta = tokio::task::spawn_blocking(move || {
-            ytdlp::fetch_meta(
+        let meta_result = tokio::task::spawn_blocking(move || {
+            ytdlp::fetch_meta_resilient(
                 &meta_url,
                 meta_browser.as_deref(),
                 meta_cookies_path.as_deref(),
@@ -359,8 +359,8 @@ impl JobRunner {
         .await
         .unwrap_or_else(|join_err| Err(format!("internal error: {join_err}")));
 
-        let meta = match meta {
-            Ok(m) => m,
+        let (meta, strategy) = match meta_result {
+            Ok(pair) => pair,
             Err(error) => {
                 if let Some(path) = &cookies_file {
                     let _ = std::fs::remove_file(path);
@@ -370,6 +370,11 @@ impl JobRunner {
             }
         };
         self.update_job(&id, |job| job.title = meta.title.clone());
+
+        // Prefer the strategy that succeeded for meta (may have dropped browser cookies
+        // or switched YouTube player client) so download doesn't re-hit the same failure.
+        let download_browser = strategy.cookies_browser.clone();
+        let download_extra_args = strategy.extra_args.clone();
 
         let output_root = match self.config.lock().unwrap().output_dir.clone() {
             Some(dir) if !dir.trim().is_empty() => dir,
@@ -415,7 +420,6 @@ impl JobRunner {
         let download_url = url;
         let download_template = output_template.clone();
         let trim_secs = trim.map(|t| (t.start_sec, t.end_sec));
-        let download_browser = if use_browser { browser } else { None };
         let download_cookies_path = cookies_file.clone();
         let result = tokio::task::spawn_blocking(move || {
             runner.run_download_process(
@@ -426,6 +430,7 @@ impl JobRunner {
                 trim_secs,
                 download_browser.as_deref(),
                 download_cookies_path.as_deref(),
+                &download_extra_args,
             )
         })
         .await
@@ -484,7 +489,9 @@ impl JobRunner {
         trim: Option<(f64, f64)>,
         cookies_browser: Option<&str>,
         cookies_file: Option<&std::path::Path>,
+        extra_args: &[String],
     ) -> Result<(), String> {
+        let extra_refs: Vec<&str> = extra_args.iter().map(String::as_str).collect();
         let (stdout, stderr) = {
             // Keep cancellation and process registration atomic: if cancellation happened while
             // metadata was fetched, do not spawn yt-dlp; otherwise `cancel()` can kill the
@@ -501,6 +508,7 @@ impl JobRunner {
                 trim,
                 cookies_browser,
                 cookies_file,
+                extra_args: &extra_refs,
             })?;
             let stdout = child.stdout.take();
             let stderr = child.stderr.take();
@@ -541,11 +549,19 @@ impl JobRunner {
             Some(Ok(status)) => {
                 let stderr_text = stderr_buf.lock().unwrap().clone();
                 let trimmed = stderr_text.trim();
-                Err(if trimmed.is_empty() {
+                let raw = if trimmed.is_empty() {
                     format!("yt-dlp exited with {status}")
                 } else {
-                    format!("yt-dlp exited with {status}: {trimmed}")
-                })
+                    // Prefer the last ERROR line so the UI isn't flooded with warnings.
+                    let concise = trimmed
+                        .lines()
+                        .rev()
+                        .find(|l| l.contains("ERROR:") || l.contains("Errno"))
+                        .unwrap_or(trimmed);
+                    let clipped: String = concise.chars().take(400).collect();
+                    format!("yt-dlp exited with {status}: {clipped}")
+                };
+                Err(ytdlp::humanize_ytdlp_error(&raw))
             }
             Some(Err(e)) => Err(format!("failed to wait for yt-dlp: {e}")),
             None => Err("yt-dlp process handle went missing".to_string()),

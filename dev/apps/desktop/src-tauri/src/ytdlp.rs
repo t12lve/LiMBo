@@ -62,21 +62,77 @@ fn resolve_binary_path(name: &str) -> Result<PathBuf, String> {
 
 /// Locates a usable Node.js ≥20 for yt-dlp's YouTube JS challenges.
 fn resolve_node_path() -> Option<PathBuf> {
-    let candidates = [
-        std::env::var_os("NODE_PATH").map(PathBuf::from),
-        which_in_path("node.exe"),
-        which_in_path("node"),
-        Some(PathBuf::from(r"C:\Program Files\nodejs\node.exe")),
-        Some(PathBuf::from(r"C:\Program Files (x86)\nodejs\node.exe")),
-        dirs::home_dir().map(|h| h.join(r"AppData\Local\Programs\node\node.exe")),
-    ];
+    let mut candidates: Vec<PathBuf> = Vec::new();
 
-    for candidate in candidates.into_iter().flatten() {
+    if let Some(p) = std::env::var_os("NODE_PATH").map(PathBuf::from) {
+        candidates.push(p);
+    }
+    if let Some(p) = which_in_path("node.exe") {
+        candidates.push(p);
+    }
+    if let Some(p) = which_in_path("node") {
+        candidates.push(p);
+    }
+    if let Some(p) = which_via_where("node.exe") {
+        candidates.push(p);
+    }
+
+    candidates.extend([
+        PathBuf::from(r"C:\Program Files\nodejs\node.exe"),
+        PathBuf::from(r"C:\Program Files (x86)\nodejs\node.exe"),
+    ]);
+
+    if let Some(home) = dirs::home_dir() {
+        candidates.push(home.join(r"AppData\Local\Programs\node\node.exe"));
+        candidates.push(home.join(r"AppData\Roaming\nvm"));
+        // nvm-windows: …\nvm\<version>\node.exe — pick any version folder
+        let nvm = home.join(r"AppData\Roaming\nvm");
+        if nvm.is_dir() {
+            if let Ok(entries) = std::fs::read_dir(&nvm) {
+                for entry in entries.flatten() {
+                    let node = entry.path().join("node.exe");
+                    if node.is_file() {
+                        candidates.push(node);
+                    }
+                }
+            }
+        }
+        let fnm = home.join(r"AppData\Local\fnm_multishells");
+        if fnm.is_dir() {
+            if let Ok(entries) = std::fs::read_dir(&fnm) {
+                for entry in entries.flatten() {
+                    let node = entry.path().join("node.exe");
+                    if node.is_file() {
+                        candidates.push(node);
+                    }
+                }
+            }
+        }
+    }
+
+    for candidate in candidates {
         if candidate.is_file() {
             return Some(candidate);
         }
     }
     None
+}
+
+fn which_via_where(name: &str) -> Option<PathBuf> {
+    let mut command = Command::new("where.exe");
+    command.arg(name);
+    hide_window(&mut command);
+    let output = command.output().ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let first = stdout.lines().next()?.trim();
+    if first.is_empty() {
+        return None;
+    }
+    let path = PathBuf::from(first);
+    path.is_file().then_some(path)
 }
 
 fn which_in_path(name: &str) -> Option<PathBuf> {
@@ -139,13 +195,53 @@ pub fn write_cookies_file(netscape: &str) -> Result<PathBuf, String> {
 }
 
 fn humanize_cookie_error(err: &str) -> String {
-    if err.contains("cookie database") || err.contains("7271") {
+    let lower = err.to_ascii_lowercase();
+    if lower.contains("cookie database")
+        || lower.contains("could not copy")
+        || lower.contains("7271")
+        || lower.contains("failed to find a matching cookie")
+    {
         return format!(
-            "{err} — Astuce LiMBo : depuis l’extension, les cookies sont envoyés directement \
-             (recharge l’extension). Sinon ferme complètement le navigateur, ou exporte via l’extension."
+            "{err} — Astuce : le navigateur verrouille sa base cookies. \
+             Relance sans cookies (réglage Cookies → none), utilise l’extension Chrome \
+             (cookies Netscape), ou ferme complètement le navigateur."
         );
     }
+    if lower.contains("failed to decrypt")
+        || lower.contains("nsig extraction")
+        || lower.contains("signature solving failed")
+    {
+        let node_hint = if resolve_node_path().is_none() {
+            " Installe Node.js ≥ 20 et redémarre LiMBo."
+        } else {
+            " Mets à jour yt-dlp (fetch-binaries --force) puis redémarre LiMBo."
+        };
+        return format!("{err} — YouTube a changé son chiffrement.{node_hint}");
+    }
     err.to_string()
+}
+
+/// Public alias used when surfacing download stderr to the UI.
+pub fn humanize_ytdlp_error(err: &str) -> String {
+    humanize_cookie_error(err)
+}
+
+/// Cookie DB lock / copy failures — safe to retry without `--cookies-from-browser`.
+pub fn is_recoverable_cookie_error(err: &str) -> bool {
+    let lower = err.to_ascii_lowercase();
+    lower.contains("could not copy")
+        || lower.contains("cookie database")
+        || lower.contains("failed to find a matching cookie")
+        || lower.contains("could not find chrome cookies")
+        || lower.contains("could not find firefox cookies")
+}
+
+/// YouTube player JS / nsig failures — may succeed with an alternate player client.
+pub fn is_youtube_decrypt_error(err: &str) -> bool {
+    let lower = err.to_ascii_lowercase();
+    lower.contains("failed to decrypt")
+        || lower.contains("nsig extraction")
+        || lower.contains("signature solving failed")
 }
 
 fn prepend_path_env(command: &mut Command, dir: &Path) {
@@ -174,10 +270,22 @@ pub fn fetch_meta(
     cookies_browser: Option<&str>,
     cookies_file: Option<&Path>,
 ) -> Result<VideoMeta, String> {
+    fetch_meta_resilient(url, cookies_browser, cookies_file).map(|(meta, _)| meta)
+}
+
+fn fetch_meta_with_args(
+    url: &str,
+    cookies_browser: Option<&str>,
+    cookies_file: Option<&Path>,
+    extra_args: &[&str],
+) -> Result<VideoMeta, String> {
     let ytdlp = resolve_binary_path("yt-dlp.exe")?;
 
     let mut command = Command::new(&ytdlp);
     apply_common_args(&mut command, cookies_browser, cookies_file);
+    for arg in extra_args {
+        command.arg(arg);
+    }
     command.args([
         "--skip-download",
         "--print",
@@ -216,6 +324,80 @@ pub fn fetch_meta(
     })
 }
 
+/// Fetch meta with automatic fallbacks: drop locked browser cookies, then alternate YT client.
+pub fn fetch_meta_resilient(
+    url: &str,
+    cookies_browser: Option<&str>,
+    cookies_file: Option<&Path>,
+) -> Result<(VideoMeta, MetaStrategy), String> {
+    match fetch_meta_with_args(url, cookies_browser, cookies_file, &[]) {
+        Ok(meta) => Ok((
+            meta,
+            MetaStrategy {
+                cookies_browser: cookies_browser.map(str::to_string),
+                extra_args: Vec::new(),
+            },
+        )),
+        Err(err)
+            if cookies_file.is_none()
+                && cookies_browser.is_some()
+                && is_recoverable_cookie_error(&err) =>
+        {
+            eprintln!("ytdlp: cookie lock — retry without browser cookies");
+            match fetch_meta_with_args(url, None, None, &[]) {
+                Ok(meta) => Ok((
+                    meta,
+                    MetaStrategy {
+                        cookies_browser: None,
+                        extra_args: Vec::new(),
+                    },
+                )),
+                Err(err2) if is_youtube_decrypt_error(&err2) => {
+                    try_android_player_client(url, None, None)
+                }
+                Err(err2) => Err(err2),
+            }
+        }
+        Err(err) if is_youtube_decrypt_error(&err) => {
+            eprintln!("ytdlp: decrypt failure — retry with android/tv client");
+            match try_android_player_client(url, cookies_browser, cookies_file) {
+                Ok(ok) => Ok(ok),
+                Err(err2)
+                    if cookies_file.is_none()
+                        && cookies_browser.is_some()
+                        && is_recoverable_cookie_error(&err2) =>
+                {
+                    try_android_player_client(url, None, None)
+                }
+                Err(err2) => Err(err2),
+            }
+        }
+        Err(err) => Err(err),
+    }
+}
+
+fn try_android_player_client(
+    url: &str,
+    cookies_browser: Option<&str>,
+    cookies_file: Option<&Path>,
+) -> Result<(VideoMeta, MetaStrategy), String> {
+    let extras = ["--extractor-args", "youtube:player_client=android,tv"];
+    let meta = fetch_meta_with_args(url, cookies_browser, cookies_file, &extras)?;
+    Ok((
+        meta,
+        MetaStrategy {
+            cookies_browser: cookies_browser.map(str::to_string),
+            extra_args: extras.iter().map(|s| (*s).to_string()).collect(),
+        },
+    ))
+}
+
+#[derive(Debug, Clone)]
+pub struct MetaStrategy {
+    pub cookies_browser: Option<String>,
+    pub extra_args: Vec<String>,
+}
+
 fn decode_utf8(bytes: &[u8]) -> String {
     String::from_utf8_lossy(bytes).into_owned()
 }
@@ -233,12 +415,13 @@ fn format_ytdlp_failure(output: &std::process::Output) -> String {
     humanize_cookie_error(&format!("yt-dlp exited with {}: {clipped}", output.status))
 }
 
-fn seconds_to_timecode(sec: f64) -> String {
-    let total = sec.max(0.0).floor() as u64;
-    let hours = total / 3600;
-    let minutes = (total % 3600) / 60;
-    let seconds = total % 60;
-    format!("{hours:02}:{minutes:02}:{seconds:02}")
+fn seconds_to_section(sec: f64) -> String {
+    let ms_total = (sec.max(0.0) * 1000.0).round() as u64;
+    let hours = ms_total / 3_600_000;
+    let minutes = (ms_total % 3_600_000) / 60_000;
+    let seconds = (ms_total % 60_000) / 1000;
+    let millis = ms_total % 1000;
+    format!("{hours:02}:{minutes:02}:{seconds:02}.{millis:03}")
 }
 
 pub struct DownloadRequest<'a> {
@@ -248,6 +431,8 @@ pub struct DownloadRequest<'a> {
     pub trim: Option<(f64, f64)>,
     pub cookies_browser: Option<&'a str>,
     pub cookies_file: Option<&'a Path>,
+    /// Extra CLI args (e.g. YouTube player_client fallback).
+    pub extra_args: &'a [&'a str],
 }
 
 pub fn download(req: DownloadRequest) -> Result<Child, String> {
@@ -259,6 +444,9 @@ pub fn download(req: DownloadRequest) -> Result<Child, String> {
 
     let mut command = Command::new(&ytdlp);
     apply_common_args(&mut command, req.cookies_browser, req.cookies_file);
+    for arg in req.extra_args {
+        command.arg(arg);
+    }
     let (_mode, bare_format) = crate::paths::decode_format_id(req.format_id);
     command
         .arg("-f")
@@ -270,10 +458,12 @@ pub fn download(req: DownloadRequest) -> Result<Child, String> {
         .arg(ffmpeg_dir);
 
     if let Some((start, end)) = req.trim {
+        // Re-encode at cut points so A/V stay in sync (avoids muted start with copy-cut).
+        command.arg("--force-keyframes-at-cuts");
         command.arg("--download-sections").arg(format!(
             "*{}-{}",
-            seconds_to_timecode(start),
-            seconds_to_timecode(end)
+            seconds_to_section(start),
+            seconds_to_section(end)
         ));
     }
 
@@ -292,10 +482,44 @@ pub fn list_formats(
     cookies_browser: Option<&str>,
     cookies_file: Option<&Path>,
 ) -> Result<FormatsPayload, String> {
+    match list_formats_once(url, cookies_browser, cookies_file, &[]) {
+        Ok(payload) => Ok(payload),
+        Err(err)
+            if cookies_file.is_none()
+                && cookies_browser.is_some()
+                && is_recoverable_cookie_error(&err) =>
+        {
+            eprintln!("ytdlp: cookie lock on formats.list — retry without browser cookies");
+            list_formats_once(url, None, None, &[])
+        }
+        Err(err) if is_youtube_decrypt_error(&err) => {
+            eprintln!("ytdlp: decrypt on formats.list — retry android/tv client");
+            let extras = ["--extractor-args", "youtube:player_client=android,tv"];
+            match list_formats_once(url, cookies_browser, cookies_file, &extras) {
+                Ok(payload) => Ok(payload),
+                Err(_) if cookies_file.is_none() && cookies_browser.is_some() => {
+                    list_formats_once(url, None, None, &extras)
+                }
+                Err(err2) => Err(err2),
+            }
+        }
+        Err(err) => Err(err),
+    }
+}
+
+fn list_formats_once(
+    url: &str,
+    cookies_browser: Option<&str>,
+    cookies_file: Option<&Path>,
+    extra_args: &[&str],
+) -> Result<FormatsPayload, String> {
     let ytdlp = resolve_binary_path("yt-dlp.exe")?;
 
     let mut command = Command::new(&ytdlp);
     apply_common_args(&mut command, cookies_browser, cookies_file);
+    for arg in extra_args {
+        command.arg(arg);
+    }
     command.args(["-J", url]);
 
     let output = run_hidden(&mut command).map_err(|e| format!("failed to spawn yt-dlp: {e}"))?;

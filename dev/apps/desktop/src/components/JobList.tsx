@@ -58,12 +58,12 @@ function JobRow({ job }: { job: JobSnapshot }) {
         />
       </div>
 
-      <div className="flex items-center justify-between text-xs text-neutral-400">
-        <span className="min-w-0 truncate" title={job.error ?? undefined}>
+      <div className="flex items-start justify-between text-xs text-neutral-400">
+        <span className="min-w-0 whitespace-normal break-words" title={job.error ?? undefined}>
           {PHASE_LABELS[job.phase]}
           {job.error ? ` — ${job.error}` : ""}
         </span>
-        <span className="tabular-nums">
+        <span className="shrink-0 tabular-nums pl-2">
           {job.percent.toFixed(0)}%
           {job.speed ? ` · ${job.speed}` : ""}
           {job.eta ? ` · ETA ${job.eta}` : ""}
