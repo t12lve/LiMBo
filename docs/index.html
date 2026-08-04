@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="fr">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>LiMBo — téléchargeur vidéo local</title>
+    <meta
+      name="description"
+      content="LiMBo : Desktop Tauri + extension Chromium + panneau Premiere Pro. Téléchargements yt-dlp locaux, Windows 11."
+    />
+    <meta name="theme-color" content="#0c0608" />
+    <link rel="icon" type="image/png" href="assets/logo.png" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@500;600;700&family=Sora:wght@400;500;600&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div class="atmosphere" aria-hidden="true"></div>
+
+    <header class="top">
+      <a class="top-brand" href="#top">
+        <img src="assets/logo.svg" alt="" width="28" height="28" />
+        <span>LiMBo</span>
+      </a>
+      <nav class="top-nav">
+        <a href="#composants">Composants</a>
+        <a href="#install">Install</a>
+        <a
+          class="top-link"
+          href="https://github.com/t12lve/LiMBo"
+          rel="noopener"
+          >GitHub</a
+        >
+      </nav>
+    </header>
+
+    <main id="top">
+      <section class="hero">
+        <img
+          class="hero-disc"
+          src="assets/logo.svg"
+          alt=""
+          width="120"
+          height="120"
+        />
+        <h1 class="hero-brand">LiMBo</h1>
+        <p class="hero-line">
+          Téléchargeur vidéo local pour Windows — Desktop, navigateur et
+          Premiere Pro, reliés par un pont privé.
+        </p>
+        <div class="hero-cta">
+          <a
+            class="btn btn-primary"
+            href="https://github.com/t12lve/LiMBo/releases/tag/v0.1.0"
+            rel="noopener"
+            >Télécharger v0.1.0</a
+          >
+          <a
+            class="btn btn-ghost"
+            href="https://github.com/t12lve/LiMBo"
+            rel="noopener"
+            >Voir le dépôt</a
+          >
+        </div>
+      </section>
+
+      <section class="strip" aria-label="Pipeline">
+        <p>
+          Extension · Premiere
+          <span class="strip-arrow">→</span>
+          <code>ws://127.0.0.1:4567</code>
+          <span class="strip-arrow">→</span>
+          Desktop · yt-dlp
+        </p>
+      </section>
+
+      <section id="composants" class="section">
+        <h2>Trois faces, un cerveau</h2>
+        <p class="section-lead">
+          Le Desktop exécute les téléchargements. L’extension et Premiere
+          observent et pilotent — sans quitter le flux de travail.
+        </p>
+
+        <div class="pillars">
+          <article class="pillar">
+            <p class="pillar-kicker">Desktop</p>
+            <h3>La Cour</h3>
+            <p>
+              Fenêtre Darkchylde, file FIFO, batch d’URLs, cookies, tray et
+              démarrage Windows. yt-dlp + FFmpeg à la maison.
+            </p>
+          </article>
+          <article class="pillar">
+            <p class="pillar-kicker">Extension</p>
+            <h3>Depuis la page</h3>
+            <p>
+              Formats, son, trim, cookies Netscape même navigateur ouvert.
+              Badge de progression, file brouillon si le Desktop dort.
+            </p>
+          </article>
+          <article class="pillar">
+            <p class="pillar-kicker">Premiere</p>
+            <h3>LiMBO-premiere</h3>
+            <p>
+              Suivi live, auto-import, bin LiMBo, nouvelles pistes — crée la
+              séquence si elle n’existe pas encore.
+            </p>
+          </article>
+        </div>
+      </section>
+
+      <section class="section section-out">
+        <h2>Sortie propre</h2>
+        <p class="section-lead">
+          Un dossier par média, un nom daté et typé — plus d’écrasement
+          silencieux.
+        </p>
+        <pre class="path-sample" tabindex="0"><code>{Plateforme} {titre} [{id}]/
+  {titre}_{YYYYMMDD-HHMMSS}_{combo|son|video}.ext</code></pre>
+      </section>
+
+      <section id="install" class="section">
+        <h2>Mise en route</h2>
+        <ol class="steps">
+          <li>
+            <strong>Desktop</strong> — installeur ou portable
+            <em>(yt-dlp + ffmpeg inclus)</em>, puis dossier de sortie au premier
+            lancement.
+          </li>
+          <li>
+            <strong>Extension</strong> — charger le dossier dézippé dans
+            <code>chrome://extensions</code> (mode développeur).
+          </li>
+          <li>
+            <strong>Premiere</strong> — copier LiMBO-premiere dans
+            <code>%APPDATA%\Adobe\CEP\extensions\</code>, activer
+            PlayerDebugMode, redémarrer.
+          </li>
+        </ol>
+        <p class="note">
+          Windows 11 · Node.js ≥ 20 recommandé (YouTube) · Premiere Pro 14+
+          optionnel.
+        </p>
+      </section>
+    </main>
+
+    <footer class="foot">
+      <p class="foot-mark">COUR DE LIMBO</p>
+      <p class="foot-links">
+        <a href="https://github.com/t12lve/LiMBo" rel="noopener">GitHub</a>
+        ·
+        <a
+          href="https://github.com/t12lve/LiMBo/releases/tag/v0.1.0"
+          rel="noopener"
+          >Release v0.1.0</a
+        >
+        ·
+        <a
+          href="https://github.com/t12lve/LiMBo/blob/master/README.md"
+          rel="noopener"
+          >README</a
+        >
+      </p>
+    </footer>
+  </body>
+</html>
