@@ -18,6 +18,12 @@
   },
   "background": { "service_worker": "src/background.ts", "type": "module" },
   "permissions": ["storage", "tabs", "alarms", "cookies"],
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "limbo@darkchylde.local",
+      "strict_min_version": "115.0"
+    }
+  },
   "host_permissions": [
     "http://*/*",
     "https://*/*",

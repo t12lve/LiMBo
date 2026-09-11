@@ -253,8 +253,8 @@ export default function App() {
               {downloadState.status === "done" && (
                 <p className="text-xs text-green-600">
                   {downloadState.queued
-                    ? "Bureau LiMBo hors ligne : ajouté à la file, sera lancé à la reconnexion."
-                    : "Téléchargement lancé — suivez la progression dans l'app LiMBo."}
+                    ? "LiMBo Desktop est hors ligne : ajouté à la file, démarrera à la reconnexion."
+                    : "Téléchargement lancé — suis la progression dans l’app LiMBo."}
                 </p>
               )}
 

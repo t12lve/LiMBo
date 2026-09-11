@@ -124,15 +124,10 @@ impl JobRunner {
         runner
     }
 
-    /// Browser name for yt-dlp cookies, if configured.
+    /// Browser name for yt-dlp cookies, if configured (`auto` resolves at call time).
     pub fn cookies_browser(&self) -> Option<String> {
         let cfg = self.config.lock().unwrap();
-        let b = cfg.cookies_browser.trim().to_string();
-        if b.is_empty() || b.eq_ignore_ascii_case("none") {
-            None
-        } else {
-            Some(b)
-        }
+        crate::browser_detect::resolve_cookies_browser(&cfg.cookies_browser)
     }
 
     /// Default quality preference for extension preselect (`best_image` | `best_sound`).
@@ -209,6 +204,7 @@ impl JobRunner {
     /// only `job.error` (no `job.created`), returning the synthetic job's id.
     pub fn reject_download(&self, url: String, error: String) -> String {
         let id = uuid::Uuid::new_v4().to_string();
+        let friendly = ytdlp::humanize_ytdlp_error(&error);
         let snapshot = JobSnapshot {
             id: id.clone(),
             url,
@@ -217,7 +213,7 @@ impl JobRunner {
             percent: 0.0,
             speed: String::new(),
             eta: String::new(),
-            error: Some(error),
+            error: Some(friendly),
             output_path: None,
             mode: None,
         };
@@ -268,9 +264,11 @@ impl JobRunner {
     }
 
     fn finish_error(&self, id: &str, error: String) {
+        eprintln!("[LiMBo] job {id} error (raw): {error}");
+        let friendly = ytdlp::humanize_ytdlp_error(&error);
         if let Some(snapshot) = self.update_job(id, |job| {
             job.phase = JobPhase::Error;
-            job.error = Some(error.clone());
+            job.error = Some(friendly);
         }) {
             self.broadcast(json!({ "type": "job.error", "job": snapshot }));
             self.emit_job_updated(&snapshot);
@@ -421,11 +419,12 @@ impl JobRunner {
         let download_template = output_template.clone();
         let trim_secs = trim.map(|t| (t.start_sec, t.end_sec));
         let download_cookies_path = cookies_file.clone();
+        let download_format_id = format_id.clone();
         let result = tokio::task::spawn_blocking(move || {
             runner.run_download_process(
                 &job_id,
                 &download_url,
-                &format_id,
+                &download_format_id,
                 &download_template,
                 trim_secs,
                 download_browser.as_deref(),
@@ -450,8 +449,33 @@ impl JobRunner {
 
         match result {
             Ok(()) => {
-                let output_path = crate::paths::resolve_output_file(&job_dir_path, &stem)
+                let mut output_path = crate::paths::resolve_output_file(&job_dir_path, &stem)
                     .map(|p| p.to_string_lossy().to_string());
+
+                let (_prefix_hint, bare_fmt) = crate::paths::decode_format_id(&format_id);
+                if bare_fmt == "target_20mb" {
+                    if let Some(ref current_path_str) = output_path {
+                        let current_path = std::path::PathBuf::from(current_path_str);
+                        let file_len = std::fs::metadata(&current_path)
+                            .map(|m| m.len())
+                            .unwrap_or(0);
+                        const TARGET_THRESHOLD_BYTES: u64 = 20_000_000;
+                        if file_len > TARGET_THRESHOLD_BYTES {
+                            self.set_phase(&id, JobPhase::Trimming);
+                            let target_bytes = (19.0 * 1024.0 * 1024.0) as u64;
+                            let duration_hint = trim.as_ref().map(|t| t.end_sec - t.start_sec);
+                            match ytdlp::compress_to_target_size(&current_path, target_bytes, duration_hint) {
+                                Ok(new_path) => {
+                                    output_path = Some(new_path.to_string_lossy().to_string());
+                                }
+                                Err(err) => {
+                                    eprintln!("[LiMBo] 20MB compression warning: {err}; keeping original download");
+                                }
+                            }
+                        }
+                    }
+                }
+
                 if let Some(snapshot) = self.update_job(&id, |job| {
                     job.phase = JobPhase::Done;
                     job.percent = 100.0;
@@ -561,7 +585,7 @@ impl JobRunner {
                     let clipped: String = concise.chars().take(400).collect();
                     format!("yt-dlp exited with {status}: {clipped}")
                 };
-                Err(ytdlp::humanize_ytdlp_error(&raw))
+                Err(raw)
             }
             Some(Err(e)) => Err(format!("failed to wait for yt-dlp: {e}")),
             None => Err("yt-dlp process handle went missing".to_string()),

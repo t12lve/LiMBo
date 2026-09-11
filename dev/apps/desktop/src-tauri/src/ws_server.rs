@@ -215,7 +215,13 @@ async fn handle_command(text: &str, runner: &JobRunner) -> Option<Value> {
                     "duration": payload.duration,
                     "thumbnail": payload.thumbnail,
                 }),
-                Err(error) => json!({ "type": "formats.error", "error": error }),
+                Err(error) => {
+                    eprintln!("[LiMBo] formats.error (raw): {error}");
+                    json!({
+                        "type": "formats.error",
+                        "error": crate::ytdlp::humanize_ytdlp_error(&error),
+                    })
+                },
             })
         }
         Some("download.create") => {
@@ -309,6 +315,7 @@ fn is_allowed_origin(origin: Option<&str>) -> bool {
         Some("null") => true,
         Some(origin) => {
             origin.starts_with("chrome-extension://")
+                || origin.starts_with("moz-extension://")
                 || origin.starts_with("http://127.0.0.1")
                 || origin.starts_with("http://localhost")
                 || origin.starts_with("file://")
@@ -331,6 +338,11 @@ mod tests {
     }
 
     #[test]
+    fn allows_any_firefox_extension_id() {
+        assert!(is_allowed_origin(Some("moz-extension://b822d5db-b27b-4fc6-b7f7-5bfaadce167a")));
+    }
+
+    #[test]
     fn allows_localhost_and_loopback_with_any_port() {
         assert!(is_allowed_origin(Some("http://127.0.0.1:5173")));
         assert!(is_allowed_origin(Some("http://localhost:5173")));
@@ -350,7 +362,7 @@ mod tests {
 
     #[test]
     fn rejects_other_extension_schemes_and_https_loopback() {
-        assert!(!is_allowed_origin(Some("moz-extension://abcdefgh")));
+        assert!(!is_allowed_origin(Some("safari-extension://abcdefgh")));
         assert!(!is_allowed_origin(Some("https://127.0.0.1")));
     }
 }

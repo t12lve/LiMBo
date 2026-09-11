@@ -7,6 +7,7 @@ prod/bin/*.exe
 
 # Build outputs (`cd dev && pnpm build`) — regenerated locally, not committed.
 /prod/extension/
+/prod/firefox/
 /prod/desktop/
 /prod/premiere/
 /prod/chrome/

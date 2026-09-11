@@ -17,13 +17,15 @@ type AppConfig = {
 type Props = {
   open: boolean;
   onClose: () => void;
+  onOpenExtensions?: () => void;
 };
 
-export default function SettingsDrawer({ open: isOpen, onClose }: Props) {
+export default function SettingsDrawer({ open: isOpen, onClose, onOpenExtensions }: Props) {
   const [outputDir, setOutputDir] = useState<string>("");
   const [sound, setSound] = useState(true);
   const [action, setAction] = useState<PostQueueAction>("none");
-  const [cookies, setCookies] = useState("none");
+  const [cookies, setCookies] = useState("auto");
+  const [detectedBrowser, setDetectedBrowser] = useState<string | null>(null);
   const [quality, setQuality] = useState<DefaultQuality>("best_image");
   const [startup, setStartup] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -34,9 +36,12 @@ export default function SettingsDrawer({ open: isOpen, onClose }: Props) {
       setOutputDir(cfg.output_dir ?? "");
       setSound(cfg.sound_on_finish ?? true);
       setAction(cfg.post_queue_action ?? "none");
-      setCookies(cfg.cookies_browser ?? "none");
+      setCookies(cfg.cookies_browser ?? "auto");
       setQuality(cfg.default_quality === "best_sound" ? "best_sound" : "best_image");
       setStartup(cfg.launch_at_startup ?? false);
+    });
+    void invoke<string | null>("detect_cookies_browser").then((name) => {
+      setDetectedBrowser(name);
     });
   }, [isOpen]);
 
@@ -132,11 +137,19 @@ export default function SettingsDrawer({ open: isOpen, onClose }: Props) {
             }}
             className="rounded border border-[var(--limbo-border)] bg-black/40 px-2 py-1.5 text-[var(--limbo-ivory)]"
           >
-            <option value="none">Aucun (recommandé)</option>
+            <option value="auto">
+              Auto
+              {detectedBrowser
+                ? ` (${detectedBrowser.charAt(0).toUpperCase()}${detectedBrowser.slice(1)})`
+                : ""}
+            </option>
+            <option value="vivaldi">Vivaldi</option>
             <option value="chrome">Chrome</option>
             <option value="edge">Edge</option>
             <option value="brave">Brave</option>
+            <option value="opera">Opera</option>
             <option value="firefox">Firefox</option>
+            <option value="none">Aucun</option>
           </select>
         </label>
 
@@ -188,10 +201,10 @@ export default function SettingsDrawer({ open: isOpen, onClose }: Props) {
         </p>
 
         <p className="text-[10px] leading-snug text-[var(--limbo-muted)]">
-          L’extension envoie ses cookies sans fermer le navigateur. Pour le
-          collage Desktop, laisse « Aucun » : Chrome/Edge ouverts bloquent
-          souvent la copie cookies (« Could not copy »). Si besoin, ferme le
-          navigateur avant d’activer Chrome/Edge ici.
+          Auto choisit le navigateur le plus récemment utilisé (profil cookies).
+          Vivaldi / Chrome / Edge ouverts peuvent bloquer la lecture (DPAPI) —
+          LiMBo réessaie alors sans cookies. Pour rester connecté sans fermer le
+          navigateur, préfère l’extension Chromium (cookies Netscape).
         </p>
 
         <p className="text-[10px] leading-snug text-[var(--limbo-muted)]">
@@ -199,6 +212,16 @@ export default function SettingsDrawer({ open: isOpen, onClose }: Props) {
           garde l’icône en bas dans la barre des tâches. Clic droit sur l’icône
           notification → Quitter.
         </p>
+
+        {onOpenExtensions && (
+          <button
+            type="button"
+            onClick={onOpenExtensions}
+            className="mt-2 rounded border border-[var(--limbo-gold)] bg-[var(--limbo-gold)]/10 px-2 py-1.5 text-xs font-semibold text-[var(--limbo-gold)] hover:bg-[var(--limbo-gold)] hover:text-black transition flex items-center justify-center gap-1.5"
+          >
+            <span>🧩</span> Installer l'extension (Chrome / Firefox)
+          </button>
+        )}
 
         <button
           type="button"

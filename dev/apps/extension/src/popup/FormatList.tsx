@@ -12,7 +12,7 @@ type Group = {
 };
 
 function groupFormats(formats: VideoFormat[]): Group[] {
-  const withSound = formats.filter((f) => f.hasVideo && f.hasAudio).slice(0, 3);
+  const withSound = formats.filter((f) => f.hasVideo && f.hasAudio).slice(0, 4);
   const audioOnly = formats.filter((f) => f.hasAudio && !f.hasVideo).slice(0, 1);
   const videoOnly = formats.filter((f) => f.hasVideo && !f.hasAudio).slice(0, 3);
 

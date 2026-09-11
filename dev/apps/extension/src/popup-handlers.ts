@@ -7,6 +7,7 @@ import { onServerMessage, send } from "./ws-client";
 import { enqueueDraft } from "./queue";
 import { exportNetscapeCookies } from "./export-cookies";
 import type { DownloadResult, FormatsResult } from "./popup-messages";
+import { friendlyBridgeError } from "./friendly-error";
 
 const FORMATS_TIMEOUT_MS = 45000;
 
@@ -72,7 +73,7 @@ function startFormatsRequest(request: PendingFormatsRequest): void {
     } catch (err: unknown) {
       finishFormatsRequest(request, {
         ok: false,
-        error: `Bureau LiMBo injoignable : ${toMessage(err)}`,
+        error: friendlyBridgeError(err),
       });
     }
   })();
@@ -128,8 +129,4 @@ export async function requestDownload(payload: {
     });
     return { ok: true, queued: true };
   }
-}
-
-function toMessage(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
 }

@@ -8,7 +8,8 @@
     "build": "tsc && vite build",
     "preview": "vite preview",
     "build:prod": "node ../../scripts/build-extension.mjs",
-    "pack:chrome": "node ../../scripts/build-extension.mjs && node ../../scripts/pack-chrome-extension.mjs"
+    "pack:chrome": "node ../../scripts/build-extension.mjs && node ../../scripts/pack-chrome-extension.mjs",
+    "pack:firefox": "node ../../scripts/pack-firefox-extension.mjs"
   },
   "dependencies": {
     "@limbo/shared": "workspace:*",

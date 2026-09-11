@@ -1,3 +1,4 @@
+mod browser_detect;
 mod config;
 mod job_runner;
 mod paths;
@@ -5,6 +6,7 @@ mod power;
 mod progress_parse;
 mod protocol;
 mod startup;
+mod user_errors;
 mod validate;
 mod ws_server;
 mod ytdlp;
@@ -34,6 +36,12 @@ fn get_app_config(state: State<ConfigState>) -> AppConfig {
     state.0.lock().unwrap().clone()
 }
 
+/// Browser id yt-dlp would use right now for `cookies_browser: auto` (or null if none found).
+#[tauri::command]
+fn detect_cookies_browser() -> Option<String> {
+    browser_detect::detect_preferred_browser()
+}
+
 #[tauri::command]
 fn ensure_token(state: State<ConfigState>) -> Result<String, String> {
     let mut config = state.0.lock().unwrap();
@@ -48,11 +56,12 @@ fn ensure_token(state: State<ConfigState>) -> Result<String, String> {
 fn set_output_dir(state: State<ConfigState>, path: String) -> Result<(), String> {
     let trimmed = path.trim();
     if trimmed.is_empty() {
-        return Err("output_dir path must not be empty".to_string());
+        return Err("Choisis un dossier de téléchargement.".to_string());
     }
 
-    std::fs::create_dir_all(Path::new(trimmed))
-        .map_err(|e| format!("failed to create output directory: {e}"))?;
+    std::fs::create_dir_all(Path::new(trimmed)).map_err(|e| {
+        format!("Impossible de créer le dossier de téléchargement : {e}")
+    })?;
 
     let mut config = state.0.lock().unwrap();
     config.output_dir = Some(trimmed.to_string());
@@ -130,8 +139,9 @@ fn update_prefs(state: State<ConfigState>, prefs: PrefsUpdate) -> Result<AppConf
     if let Some(browser) = prefs.cookies_browser {
         let b = browser.trim().to_ascii_lowercase();
         config.cookies_browser = match b.as_str() {
-            "edge" | "brave" | "firefox" | "none" | "chrome" => b,
-            _ => "chrome".to_string(),
+            "auto" | "vivaldi" | "chrome" | "edge" | "brave" | "firefox" | "opera" | "chromium"
+            | "none" => b,
+            _ => "auto".to_string(),
         };
     }
     if let Some(q) = prefs.default_quality {
@@ -170,6 +180,128 @@ fn encode_batch_format_id(format_id: &str) -> String {
         "video" => paths::encode_format_id(bare, true, false),
         _ => paths::encode_format_id(bare, true, true),
     }
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct ExtensionPaths {
+    pub chromium_dir: String,
+    pub firefox_dir: String,
+    pub firefox_xpi: String,
+    pub premiere_dir: String,
+    pub guide_path: String,
+}
+
+fn resolve_extension_paths() -> ExtensionPaths {
+    let mut chromium_dir = None;
+    let mut firefox_dir = None;
+    let mut firefox_xpi = None;
+    let mut premiere_dir = None;
+    let mut guide_path = None;
+
+    if let Some(exe_dir) = std::env::current_exe().ok().and_then(|p| p.parent().map(std::path::PathBuf::from)) {
+        let inst_cr = exe_dir.join("extension").join("chromium");
+        let inst_ff = exe_dir.join("extension").join("firefox");
+        let inst_pr = exe_dir.join("extension").join("premiere");
+        let inst_guide = exe_dir.join("extension").join("install-instructions.html");
+        if inst_cr.is_dir() {
+            chromium_dir = Some(inst_cr.to_string_lossy().to_string());
+        }
+        if inst_ff.is_dir() {
+            let xpi = inst_ff.join("LiMBo-firefox.xpi");
+            if xpi.is_file() {
+                firefox_xpi = Some(xpi.to_string_lossy().to_string());
+            }
+            firefox_dir = Some(inst_ff.to_string_lossy().to_string());
+        }
+        if inst_pr.is_dir() {
+            premiere_dir = Some(inst_pr.to_string_lossy().to_string());
+        }
+        if inst_guide.is_file() {
+            guide_path = Some(inst_guide.to_string_lossy().to_string());
+        }
+    }
+
+    if let Some(appdata) = std::env::var_os("APPDATA") {
+        let cep_dir = std::path::PathBuf::from(appdata)
+            .join("Adobe")
+            .join("CEP")
+            .join("extensions")
+            .join("LiMBO-premiere");
+        if cep_dir.is_dir() {
+            premiere_dir = Some(cep_dir.to_string_lossy().to_string());
+        }
+    }
+
+    let repo_root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../..");
+    let repo_cr = repo_root.join("prod").join("extension");
+    let repo_ff = repo_root.join("prod").join("firefox");
+    let repo_pr = repo_root.join("prod").join("premiere");
+    let repo_guide = repo_cr.join("install-instructions.html");
+
+    if chromium_dir.is_none() && repo_cr.is_dir() {
+        chromium_dir = Some(repo_cr.to_string_lossy().to_string());
+    }
+    if firefox_dir.is_none() && repo_ff.is_dir() {
+        let xpi = repo_ff.join("LiMBo-firefox.xpi");
+        if xpi.is_file() {
+            firefox_xpi = Some(xpi.to_string_lossy().to_string());
+        }
+        firefox_dir = Some(repo_ff.to_string_lossy().to_string());
+    }
+    if premiere_dir.is_none() && repo_pr.is_dir() {
+        premiere_dir = Some(repo_pr.to_string_lossy().to_string());
+    }
+    if guide_path.is_none() && repo_guide.is_file() {
+        guide_path = Some(repo_guide.to_string_lossy().to_string());
+    }
+
+    ExtensionPaths {
+        chromium_dir: chromium_dir.unwrap_or_default(),
+        firefox_dir: firefox_dir.unwrap_or_default(),
+        firefox_xpi: firefox_xpi.unwrap_or_default(),
+        premiere_dir: premiere_dir.unwrap_or_default(),
+        guide_path: guide_path.unwrap_or_default(),
+    }
+}
+
+#[tauri::command]
+fn get_extension_paths() -> ExtensionPaths {
+    resolve_extension_paths()
+}
+
+#[tauri::command]
+fn open_extension_dir(browser: String) -> Result<(), String> {
+    let paths = resolve_extension_paths();
+    let target = match browser.to_ascii_lowercase().as_str() {
+        "firefox" => paths.firefox_dir,
+        "premiere" => paths.premiere_dir,
+        _ => paths.chromium_dir,
+    };
+    if target.is_empty() || !std::path::Path::new(&target).exists() {
+        return Err("Dossier d'extension introuvable. Veuillez exécuter le build de l'extension.".to_string());
+    }
+    #[cfg(windows)]
+    {
+        let _ = std::process::Command::new("explorer.exe")
+            .arg(&target)
+            .spawn();
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn open_extension_guide() -> Result<(), String> {
+    let paths = resolve_extension_paths();
+    if !paths.guide_path.is_empty() && std::path::Path::new(&paths.guide_path).exists() {
+        #[cfg(windows)]
+        {
+            let _ = std::process::Command::new("cmd")
+                .args(["/c", "start", "", &paths.guide_path])
+                .spawn();
+        }
+        return Ok(());
+    }
+    Err("Guide d'installation introuvable.".to_string())
 }
 
 #[tauri::command]
@@ -278,13 +410,17 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             greet,
             get_app_config,
+            detect_cookies_browser,
             ensure_token,
             set_output_dir,
             get_jobs_snapshot,
             cancel_job,
             enqueue_urls,
             update_prefs,
-            quit_app
+            quit_app,
+            get_extension_paths,
+            open_extension_dir,
+            open_extension_guide
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

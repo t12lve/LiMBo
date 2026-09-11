@@ -1,6 +1,7 @@
 import { useState, type ReactNode } from "react";
 import SettingsDrawer from "./SettingsDrawer";
 import WindowControls from "./WindowControls";
+import ExtensionModal from "./ExtensionModal";
 
 type Props = {
   children: ReactNode;
@@ -26,6 +27,7 @@ function SteppingDisc({ className = "" }: { className?: string }) {
 
 export default function AppShell({ children, jobCount = 0 }: Props) {
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [extensionOpen, setExtensionOpen] = useState(false);
 
   return (
     <div className="relative flex h-screen w-screen flex-col overflow-hidden bg-[var(--limbo-bg)] text-[var(--limbo-ivory)]">
@@ -55,6 +57,15 @@ export default function AppShell({ children, jobCount = 0 }: Props) {
           )}
           <button
             type="button"
+            onClick={() => setExtensionOpen(true)}
+            className="rounded border border-[var(--limbo-border)] px-2 py-1 text-xs hover:border-[var(--limbo-gold)] text-[var(--limbo-ivory)] transition"
+            title="Extensions navigateur (Chrome / Firefox)"
+            aria-label="Extensions navigateur"
+          >
+            🧩
+          </button>
+          <button
+            type="button"
             onClick={() => setSettingsOpen(true)}
             className="rounded border border-[var(--limbo-border)] px-2 py-1 text-[var(--limbo-gold)] hover:border-[var(--limbo-gold)]"
             title="Réglages"
@@ -74,7 +85,15 @@ export default function AppShell({ children, jobCount = 0 }: Props) {
         COUR DE LIMBO
       </footer>
 
-      <SettingsDrawer open={settingsOpen} onClose={() => setSettingsOpen(false)} />
+      <SettingsDrawer
+        open={settingsOpen}
+        onClose={() => setSettingsOpen(false)}
+        onOpenExtensions={() => {
+          setSettingsOpen(false);
+          setExtensionOpen(true);
+        }}
+      />
+      <ExtensionModal isOpen={extensionOpen} onClose={() => setExtensionOpen(false)} />
     </div>
   );
 }

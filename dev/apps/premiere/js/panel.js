@@ -268,7 +268,7 @@
     try {
       ws = new WebSocket(WS_URL);
     } catch (e) {
-      setStatus(false, "Desktop hors ligne");
+      setStatus(false, "LiMBo Desktop hors ligne — lance l’app");
       scheduleReconnect();
       return;
     }
@@ -304,8 +304,8 @@
       if (msg.type === "auth.fail") {
         authenticated = false;
         localStorage.removeItem(TOKEN_KEY);
-        setStatus(false, "Auth refusée");
-        log(msg.error || "auth.fail");
+        setStatus(false, "Auth refusée — redémarre LiMBo Desktop");
+        log("Connexion refusée. Redémarre l’app LiMBo Desktop, puis réessaie.");
         try {
           ws.close();
         } catch (e) {}
@@ -336,12 +336,12 @@
     ws.onclose = function () {
       if (socket === ws) socket = null;
       authenticated = false;
-      setStatus(false, "Desktop hors ligne");
+      setStatus(false, "LiMBo Desktop hors ligne — lance l’app");
       scheduleReconnect();
     };
 
     ws.onerror = function () {
-      setStatus(false, "Desktop hors ligne");
+      setStatus(false, "LiMBo Desktop hors ligne — lance l’app");
     };
   }
 

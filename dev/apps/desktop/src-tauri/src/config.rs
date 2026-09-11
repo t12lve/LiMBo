@@ -9,9 +9,9 @@ fn default_true() -> bool {
 }
 
 fn default_cookies_browser() -> String {
-    // Prefer none: `--cookies-from-browser` fails while Chrome/Edge is open ("Could not copy").
-    // Authenticated downloads should use the extension's Netscape cookie jar.
-    "none".to_string()
+    // Auto-detect the most recently used browser (Vivaldi, Chrome, Edge, …).
+    // DPAPI / locked DB still falls back to a cookie-less retry in ytdlp.rs.
+    "auto".to_string()
 }
 
 fn default_quality() -> String {
@@ -40,7 +40,7 @@ pub struct AppConfig {
     /// Power action after the queue drains (Windows).
     #[serde(default)]
     pub post_queue_action: PostQueueAction,
-    /// Browser name for `yt-dlp --cookies-from-browser` (`chrome`/`edge`/`brave`/`none`).
+    /// Browser for `yt-dlp --cookies-from-browser`: `auto` | `vivaldi` | `chrome` | `edge` | …
     #[serde(default = "default_cookies_browser")]
     pub cookies_browser: String,
     /// Default quality preference for batch + extension preselect.
@@ -70,9 +70,27 @@ pub fn load_or_init() -> Result<AppConfig, String> {
     if file.exists() {
         let contents =
             fs::read_to_string(&file).map_err(|e| format!("failed to read config.json: {e}"))?;
-        let config: AppConfig = serde_json::from_str(&contents)
+        // PowerShell `Set-Content -Encoding utf8` writes a UTF-8 BOM that serde_json rejects.
+        let contents = contents.strip_prefix('\u{feff}').unwrap_or(&contents);
+        let mut config: AppConfig = serde_json::from_str(contents)
             .map_err(|e| format!("failed to parse config.json: {e}"))?;
-        // Re-save so newly added fields get written with defaults.
+        let browser = config.cookies_browser.to_ascii_lowercase();
+        if browser.is_empty()
+            || !matches!(
+                browser.as_str(),
+                "auto"
+                    | "none"
+                    | "vivaldi"
+                    | "chrome"
+                    | "edge"
+                    | "brave"
+                    | "firefox"
+                    | "opera"
+                    | "chromium"
+            )
+        {
+            config.cookies_browser = "auto".to_string();
+        }
         let _ = save(&config);
         return Ok(config);
     }

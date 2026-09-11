@@ -29,7 +29,7 @@ if (haveBinaries) {
 }
 
 run("build-extension.mjs");
-run("build-desktop.mjs");
 run("build-premiere.mjs");
+run("build-desktop.mjs");
 
 console.log("build-all: done");

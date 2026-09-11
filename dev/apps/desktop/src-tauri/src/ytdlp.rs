@@ -52,10 +52,20 @@ fn resolve_binary_path(name: &str) -> Result<PathBuf, String> {
         if sidecar_candidate.is_file() {
             return Ok(sidecar_candidate);
         }
+
+        let res_candidate = exe_dir.join("resources").join(name);
+        if res_candidate.is_file() {
+            return Ok(res_candidate);
+        }
+
+        let bin_candidate = exe_dir.join("bin").join(name);
+        if bin_candidate.is_file() {
+            return Ok(bin_candidate);
+        }
     }
 
     Err(format!(
-        "{name} not found (looked in the repo's prod/bin/ and next to the app executable); \
+        "{name} not found (looked in the repo's prod/bin/, next to the app executable, and in resources/); \
          run `node scripts/fetch-binaries.mjs` from dev/ to download it"
     ))
 }
@@ -187,6 +197,18 @@ fn apply_common_args(
     }
 }
 
+/// Site-specific yt-dlp flags. TikTok currently rejects default Chrome 14x UA / impersonation
+/// (see yt-dlp#17403); Chrome 139 sidesteps the challenge page.
+fn apply_site_workarounds(command: &mut Command, url: &str) {
+    let lower = url.to_ascii_lowercase();
+    if lower.contains("tiktok.com") || lower.contains("tiktokv.com") {
+        // Chrome 140–149 UA is blocked by TikTok; 139 works (yt-dlp#17403).
+        command.arg("--user-agent").arg(
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/139.0.0.0 Safari/537.36",
+        );
+    }
+}
+
 /// Writes a Netscape cookie jar under the system temp dir. Caller should delete when done.
 pub fn write_cookies_file(netscape: &str) -> Result<PathBuf, String> {
     let path = std::env::temp_dir().join(format!("limbo-cookies-{}.txt", uuid::Uuid::new_v4()));
@@ -194,55 +216,12 @@ pub fn write_cookies_file(netscape: &str) -> Result<PathBuf, String> {
     Ok(path)
 }
 
-fn humanize_cookie_error(err: &str) -> String {
-    let lower = err.to_ascii_lowercase();
-    if lower.contains("cookie database")
-        || lower.contains("could not copy")
-        || lower.contains("7271")
-        || lower.contains("failed to find a matching cookie")
-    {
-        return format!(
-            "{err} — Astuce : le navigateur verrouille sa base cookies. \
-             Relance sans cookies (réglage Cookies → none), utilise l’extension Chrome \
-             (cookies Netscape), ou ferme complètement le navigateur."
-        );
-    }
-    if lower.contains("failed to decrypt")
-        || lower.contains("nsig extraction")
-        || lower.contains("signature solving failed")
-    {
-        let node_hint = if resolve_node_path().is_none() {
-            " Installe Node.js ≥ 20 et redémarre LiMBo."
-        } else {
-            " Mets à jour yt-dlp (fetch-binaries --force) puis redémarre LiMBo."
-        };
-        return format!("{err} — YouTube a changé son chiffrement.{node_hint}");
-    }
-    err.to_string()
-}
-
 /// Public alias used when surfacing download stderr to the UI.
 pub fn humanize_ytdlp_error(err: &str) -> String {
-    humanize_cookie_error(err)
+    crate::user_errors::humanize_ytdlp_error(err, resolve_node_path().is_some())
 }
 
-/// Cookie DB lock / copy failures — safe to retry without `--cookies-from-browser`.
-pub fn is_recoverable_cookie_error(err: &str) -> bool {
-    let lower = err.to_ascii_lowercase();
-    lower.contains("could not copy")
-        || lower.contains("cookie database")
-        || lower.contains("failed to find a matching cookie")
-        || lower.contains("could not find chrome cookies")
-        || lower.contains("could not find firefox cookies")
-}
-
-/// YouTube player JS / nsig failures — may succeed with an alternate player client.
-pub fn is_youtube_decrypt_error(err: &str) -> bool {
-    let lower = err.to_ascii_lowercase();
-    lower.contains("failed to decrypt")
-        || lower.contains("nsig extraction")
-        || lower.contains("signature solving failed")
-}
+pub use crate::user_errors::{is_recoverable_cookie_error, is_youtube_decrypt_error};
 
 fn prepend_path_env(command: &mut Command, dir: &Path) {
     let mut paths = vec![dir.to_path_buf()];
@@ -283,6 +262,7 @@ fn fetch_meta_with_args(
 
     let mut command = Command::new(&ytdlp);
     apply_common_args(&mut command, cookies_browser, cookies_file);
+    apply_site_workarounds(&mut command, url);
     for arg in extra_args {
         command.arg(arg);
     }
@@ -412,7 +392,9 @@ fn format_ytdlp_failure(output: &std::process::Output) -> String {
         .or_else(|| trimmed.lines().rev().find(|l| l.contains("WARNING:")))
         .unwrap_or(trimmed);
     let clipped: String = concise.chars().take(280).collect();
-    humanize_cookie_error(&format!("yt-dlp exited with {}: {clipped}", output.status))
+    let raw = format!("yt-dlp exited with {}: {clipped}", output.status);
+    eprintln!("[LiMBo] yt-dlp failure (raw): {raw}");
+    humanize_ytdlp_error(&raw)
 }
 
 fn seconds_to_section(sec: f64) -> String {
@@ -422,6 +404,111 @@ fn seconds_to_section(sec: f64) -> String {
     let seconds = (ms_total % 60_000) / 1000;
     let millis = ms_total % 1000;
     format!("{hours:02}:{minutes:02}:{seconds:02}.{millis:03}")
+}
+
+pub fn parse_ffmpeg_duration(stderr: &str) -> Option<f64> {
+    let marker = "Duration: ";
+    let idx = stderr.find(marker)?;
+    let rest = &stderr[idx + marker.len()..];
+    let time_str = rest.split(',').next()?.trim();
+    let parts: Vec<&str> = time_str.split(':').collect();
+    if parts.len() != 3 {
+        return None;
+    }
+    let hours: f64 = parts[0].trim().parse().ok()?;
+    let minutes: f64 = parts[1].trim().parse().ok()?;
+    let seconds: f64 = parts[2].trim().parse().ok()?;
+    Some(hours * 3600.0 + minutes * 60.0 + seconds)
+}
+
+pub fn probe_duration(file_path: &Path) -> Result<f64, String> {
+    let ffmpeg = resolve_binary_path("ffmpeg.exe")?;
+    let mut cmd = Command::new(&ffmpeg);
+    cmd.arg("-i").arg(file_path);
+    hide_window(&mut cmd);
+    let output = cmd.output().map_err(|e| format!("failed to probe duration with ffmpeg: {e}"))?;
+    let stderr = decode_utf8(&output.stderr);
+    parse_ffmpeg_duration(&stderr)
+        .ok_or_else(|| "could not determine media duration from ffmpeg".to_string())
+}
+
+pub fn compress_to_target_size(
+    input_path: &Path,
+    target_bytes: u64,
+    known_duration: Option<f64>,
+) -> Result<PathBuf, String> {
+    let ffmpeg = resolve_binary_path("ffmpeg.exe")?;
+    let duration = match known_duration.filter(|d| *d > 0.0) {
+        Some(d) => d,
+        None => probe_duration(input_path)?,
+    };
+
+    if duration <= 0.0 {
+        return Err("invalid duration for target compression".to_string());
+    }
+
+    let target_bits = target_bytes as f64 * 8.0;
+    let total_bitrate_bps = target_bits / duration;
+
+    let audio_bitrate_bps = if total_bitrate_bps < 300_000.0 {
+        64_000.0
+    } else if total_bitrate_bps < 800_000.0 {
+        96_000.0
+    } else {
+        128_000.0
+    };
+
+    let video_bitrate_bps = (total_bitrate_bps - audio_bitrate_bps).max(50_000.0);
+    let v_bitrate_k = (video_bitrate_bps / 1000.0).round() as u64;
+    let a_bitrate_k = (audio_bitrate_bps / 1000.0).round() as u64;
+
+    let temp_output = input_path.with_extension("compressed_20mb.temp.mp4");
+
+    let mut cmd = Command::new(&ffmpeg);
+    cmd.arg("-y")
+        .arg("-i")
+        .arg(input_path)
+        .arg("-c:v")
+        .arg("libx264")
+        .arg("-b:v")
+        .arg(format!("{v_bitrate_k}k"))
+        .arg("-maxrate")
+        .arg(format!("{}k", (v_bitrate_k as f64 * 1.3).round() as u64))
+        .arg("-bufsize")
+        .arg(format!("{}k", v_bitrate_k * 2))
+        .arg("-preset")
+        .arg("fast")
+        .arg("-c:a")
+        .arg("aac")
+        .arg("-b:a")
+        .arg(format!("{a_bitrate_k}k"))
+        .arg("-movflags")
+        .arg("+faststart");
+
+    if v_bitrate_k < 800 {
+        cmd.arg("-vf").arg("scale='min(1280,iw)':-2");
+    }
+
+    cmd.arg(&temp_output);
+    hide_window(&mut cmd);
+
+    let output = cmd.output().map_err(|e| format!("failed to run ffmpeg compression: {e}"))?;
+    if !output.status.success() {
+        let _ = std::fs::remove_file(&temp_output);
+        let stderr = decode_utf8(&output.stderr);
+        return Err(format!("ffmpeg compression failed: {stderr}"));
+    }
+
+    let final_path = input_path.with_extension("mp4");
+    if final_path != input_path && input_path.exists() {
+        let _ = std::fs::remove_file(input_path);
+    }
+    if let Err(_) = std::fs::rename(&temp_output, &final_path) {
+        let _ = std::fs::copy(&temp_output, &final_path);
+        let _ = std::fs::remove_file(&temp_output);
+    }
+
+    Ok(final_path)
 }
 
 pub struct DownloadRequest<'a> {
@@ -444,13 +531,19 @@ pub fn download(req: DownloadRequest) -> Result<Child, String> {
 
     let mut command = Command::new(&ytdlp);
     apply_common_args(&mut command, req.cookies_browser, req.cookies_file);
+    apply_site_workarounds(&mut command, req.url);
     for arg in req.extra_args {
         command.arg(arg);
     }
     let (_mode, bare_format) = crate::paths::decode_format_id(req.format_id);
+    let format_arg = if bare_format == "target_20mb" {
+        "bv*[filesize_approx<=18M]+ba[filesize_approx<=2M]/b[filesize_approx<=20M]/bv*[height<=720]+ba/b[height<=720]/bv*+ba/b"
+    } else {
+        bare_format
+    };
     command
         .arg("-f")
-        .arg(bare_format)
+        .arg(format_arg)
         .arg("-o")
         .arg(req.output_template)
         .arg("--newline")
@@ -517,6 +610,7 @@ fn list_formats_once(
 
     let mut command = Command::new(&ytdlp);
     apply_common_args(&mut command, cookies_browser, cookies_file);
+    apply_site_workarounds(&mut command, url);
     for arg in extra_args {
         command.arg(arg);
     }
@@ -682,6 +776,15 @@ fn curate_formats(raw: &[RawFormat]) -> Vec<VideoFormat> {
         });
     }
 
+    with_sound.push(VideoFormat {
+        format_id: crate::paths::encode_format_id("target_20mb", true, true),
+        label: "≤ 20 Mo mp4".to_string(),
+        ext: "mp4".to_string(),
+        height: None,
+        has_audio: true,
+        has_video: true,
+    });
+
     let mut out = with_sound;
 
     if let Some(audio) = best_audio {
@@ -771,4 +874,34 @@ fn raw_format_from_value(value: &Value) -> Option<RawFormat> {
         has_audio,
         has_video,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn dpapi_is_cookie_error_not_youtube() {
+        let err = "ERROR: Failed to decrypt with DPAPI. See https://github.com/yt-dlp/yt-dlp/issues/10927";
+        assert!(is_recoverable_cookie_error(err));
+        assert!(!is_youtube_decrypt_error(err));
+        let msg = humanize_ytdlp_error(err);
+        assert!(msg.to_ascii_lowercase().contains("cookie"));
+        assert!(!msg.contains("YouTube bloque"));
+        assert!(!msg.contains("DPAPI"));
+    }
+
+    #[test]
+    fn nsig_is_youtube_not_cookie() {
+        let err = "ERROR: nsig extraction failed: Some error";
+        assert!(!is_recoverable_cookie_error(err));
+        assert!(is_youtube_decrypt_error(err));
+    }
+
+    #[test]
+    fn parse_ffmpeg_duration_works() {
+        let stderr = "Input #0, mov,mp4...\n  Duration: 00:02:15.30, start: 0.000000, bitrate: 1240 kb/s\n";
+        let d = parse_ffmpeg_duration(stderr).unwrap();
+        assert!((d - 135.30).abs() < 0.001);
+    }
 }

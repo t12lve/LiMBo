@@ -102,28 +102,42 @@ Les artefacts Cargo Desktop sont redirigés hors Dropbox vers
 
 ### 1. Desktop
 
-- Portable : `prod/desktop/limbo-desktop.exe` (yt-dlp / ffmpeg à côté)
-- Ou installateur : `prod/desktop/bundle/` (`.msi` / `.exe` NSIS)
+- **Installateur Windows officiel (prêt à partager)** : `prod/desktop/LiMBo-Installer.exe`.
+  - Package autonome tout-en-un (~48 Mo) incluant LiMBo Desktop, yt-dlp, ffmpeg, l'extension Premiere Pro (CEP), les extensions Chromium & Firefox et le guide interactif.
+  - Installe automatiquement LiMBo dans `%LOCALAPPDATA%\Programs\LiMBo` (ou `Program Files` selon le choix).
+  - Installe et active automatiquement l'extension Premiere Pro dans `%APPDATA%\Adobe\CEP\extensions\LiMBO-premiere` avec `PlayerDebugMode=1`.
+  - Crée les **raccourcis Bureau et Menu Démarrer**.
+  - S'enregistre dans les applications Windows (« Paramètres > Applications installées ») avec son désinstallateur propre.
+  - Propose l'activation de l'extension dès la fin de l'installation.
 
-Au **premier lancement**, choisir le dossier de téléchargement (écran d’accueil).  
+Au **premier lancement**, choisir le dossier de téléchargement (écran d’accueil). Un écran d'accueil propose également d'activer l'extension dans votre navigateur.
 Sans dossier configuré, aucun téléchargement ne démarre.
 
 Par défaut, LiMBo s’inscrit au **démarrage Windows** (HKCU `Run\LiMBo`) avec `--minimized` (tray).
 
-### 2. Extension Chrome / Edge
+### 2. Extension Chrome / Edge / Brave (Chromium)
 
-1. `chrome://extensions` (ou `edge://extensions`)
-2. Mode développeur
+1. Ouvrez `chrome://extensions` (ou `edge://extensions`, `brave://extensions`)
+2. Activez le **Mode développeur**
 3. « Charger l’extension non empaquetée » → dossier **`prod/extension`**
+4. Ou suivez le guide visuel interactif : `prod/extension/install-instructions.html`
 
-### 3. LiMBO-premiere (Premiere Pro)
+### 3. Extension Mozilla Firefox
 
-1. Desktop doit tourner (`ws://127.0.0.1:4567`)
-2. Depuis `dev/` :
+1. Ouvrez `about:debugging#/runtime/this-firefox`
+2. Cliquez sur **« Ce Firefox »** puis sur **« Charger un module temporaire… »**
+3. Sélectionnez le fichier `manifest.json` ou l'archive **`prod/firefox/LiMBo-firefox.xpi`**
+
+### 4. LiMBO-premiere (Premiere Pro)
+
+- **Automatique (recommandé)** : `LiMBo-Installer.exe` configure automatiquement le panneau dans `%APPDATA%\Adobe\CEP\extensions\LiMBO-premiere` et active `PlayerDebugMode=1`.  
+  Il suffit de lancer Premiere Pro → **Fenêtre → Extensions → LiMBO-premiere**.
+- **Installation manuelle (développeur)** : depuis `dev/` :
 
 ```bash
 pnpm --filter @limbo/premiere install:cep
 ```
+
 
    Copie vers `%APPDATA%\Adobe\CEP\extensions\LiMBO-premiere`  
    et active `PlayerDebugMode=1` pour CSXS.9–12 (extensions non signées).
@@ -174,10 +188,11 @@ Bind **loopback uniquement** (jamais `0.0.0.0`).
 
 - Origin absent (clients non-navigateur)
 - `chrome-extension://…`
+- `moz-extension://…` (Mozilla Firefox)
 - `http://127.0.0.1…` / `http://localhost…`
 - `null` / `file://…` (panneaux CEP Premiere)
 
-Rejeté : origines `https://…` (y compris loopback), `moz-extension://…`, etc.
+Rejeté : origines `https://…` (y compris loopback), autres schemes non autorisés.
 
 ### JobRunner
 
