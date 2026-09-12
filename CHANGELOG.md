@@ -2,6 +2,20 @@
 
 Toutes les dates sont en UTC+2 (Europe/Paris). Le projet suit [SemVer](https://semver.org/lang/fr/).
 
+## [0.3.0] — 2026-09-12
+
+### Ajouté
+- **Détection automatique d'Adobe Premiere Pro** : l'installeur NSIS sonde le registre (`HKCU`/`HKLM`) et `%APPDATA%` pour Premiere Pro et Premiere Pro (Beta).
+- **Intégration CEP automatique** : si Premiere est détecté, l'installeur propose de déployer le panneau CEP dans `%APPDATA%\Adobe\CEP\extensions\LiMBO-premiere` et active automatiquement `PlayerDebugMode` (CSXS.9 à CSXS.16).
+- **Extension Firefox officielle** : compilation MV3 dédiée et packaging automatique en `.xpi` (`LiMBo-firefox.xpi`).
+- **Guide d'onboarding visuel interactif** : page HTML d'instructions intégrée (`install-instructions.html`) proposée à la fin de l'installation pour activer l'extension dans Chrome/Edge ou Firefox.
+- **Installeur Windows tout-en-un (`LiMBo-Installer.exe`)** : embarque l'application desktop, `yt-dlp`, `ffmpeg`, le panneau CEP Premiere, et les extensions de navigateur.
+- **Messages d'erreur utilisateur enrichis** : explication claire et conseils d'action en cas de blocage YouTube (Node.js requis, défi bot, etc.) ou d'accès fichier.
+- **Modal d'aide navigateur dans le Desktop** : bouton dédié dans l'interface pour guider l'utilisateur sur l'installation de l'extension.
+
+### Modifié
+- Version alignée **0.3.0** (Desktop, extension Chromium/Firefox, Premiere CEP, shared).
+
 ## [0.2.0] — 2026-08-04
 
 ### Ajouté
@@ -33,5 +47,6 @@ Toutes les dates sont en UTC+2 (Europe/Paris). Le projet suit [SemVer](https://s
 - README produit complet
 - Première release GitHub (installeurs, portable, extension, Premiere)
 
+[0.3.0]: https://github.com/t12lve/LiMBo/releases/tag/v0.3.0
 [0.2.0]: https://github.com/t12lve/LiMBo/releases/tag/v0.2.0
 [0.1.0]: https://github.com/t12lve/LiMBo/releases/tag/v0.1.0
