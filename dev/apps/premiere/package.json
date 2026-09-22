@@ -1,7 +1,7 @@
 {
   "name": "@limbo/premiere",
   "private": true,
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "LiMBO-premiere — panneau CEP Adobe Premiere Pro",
   "scripts": {
     "build": "node ../../scripts/build-premiere.mjs",

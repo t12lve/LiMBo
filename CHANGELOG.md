@@ -2,6 +2,14 @@
 
 Toutes les dates sont en UTC+2 (Europe/Paris). Le projet suit [SemVer](https://semver.org/lang/fr/).
 
+## [0.3.1] — 2026-09-22
+
+### Corrigé
+- **Suppression des craquements audio au lancement** : désactivation de l'accélération matérielle GPU (`--disable-gpu`, `--disable-gpu-compositing`) dans WebView2 pour éliminer les pics de latence DPC (`nvlddmkm.sys`) sur les cartes NVIDIA (RTX 5090).
+- **Isolation audio complète de WebView2** : désactivation des flux audio Chromium (`--disable-audio-output`, `--mute-audio`) et du sandbox audio pour éviter les conflits d'horloge / réinitialisations WASAPI sur les interfaces audio USB à faible latence (TC-Helicon GoXLR, DACs externes).
+- **Notification sonore native** : remplacement de l'AudioContext Web Audio par un appel système natif `MessageBeep(0x40)`, sans allocation de flux WASAPI persistant.
+- Version alignée **0.3.1** (Desktop, extension Chromium/Firefox, Premiere CEP, shared).
+
 ## [0.3.0] — 2026-09-12
 
 ### Ajouté
@@ -47,6 +55,7 @@ Toutes les dates sont en UTC+2 (Europe/Paris). Le projet suit [SemVer](https://s
 - README produit complet
 - Première release GitHub (installeurs, portable, extension, Premiere)
 
+[0.3.1]: https://github.com/t12lve/LiMBo/releases/tag/v0.3.1
 [0.3.0]: https://github.com/t12lve/LiMBo/releases/tag/v0.3.0
 [0.2.0]: https://github.com/t12lve/LiMBo/releases/tag/v0.2.0
 [0.1.0]: https://github.com/t12lve/LiMBo/releases/tag/v0.1.0

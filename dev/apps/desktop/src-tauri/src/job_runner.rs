@@ -311,6 +311,9 @@ impl JobRunner {
                     let cfg = self.config.lock().unwrap();
                     (cfg.post_queue_action, cfg.sound_on_finish)
                 };
+                if sound {
+                    crate::sound::play_finish_sound();
+                }
                 let _ = self.app_handle.emit(
                     QUEUE_IDLE_EVENT,
                     serde_json::json!({ "soundOnFinish": sound }),

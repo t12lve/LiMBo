@@ -5,6 +5,7 @@ mod paths;
 mod power;
 mod progress_parse;
 mod protocol;
+mod sound;
 mod startup;
 mod user_errors;
 mod validate;
@@ -305,6 +306,11 @@ fn open_extension_guide() -> Result<(), String> {
 }
 
 #[tauri::command]
+fn play_finish_sound() {
+    sound::play_finish_sound();
+}
+
+#[tauri::command]
 fn quit_app(app: tauri::AppHandle) {
     ALLOW_EXIT.store(true, Ordering::SeqCst);
     app.exit(0);
@@ -418,6 +424,7 @@ pub fn run() {
             enqueue_urls,
             update_prefs,
             quit_app,
+            play_finish_sound,
             get_extension_paths,
             open_extension_dir,
             open_extension_guide
