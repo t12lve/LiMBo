@@ -123,7 +123,7 @@ export default function SettingsDrawer({ open: isOpen, onClose, onOpenExtensions
             className="rounded border border-[var(--limbo-border)] bg-black/40 px-2 py-1.5 text-[var(--limbo-ivory)]"
           >
             <option value="best_image">Meilleure image</option>
-            <option value="best_sound">Meilleur son</option>
+            <option value="best_sound">Meilleur son (mp3)</option>
           </select>
         </label>
 

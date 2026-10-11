@@ -2,6 +2,12 @@
 
 Toutes les dates sont en UTC+2 (Europe/Paris). Le projet suit [SemVer](https://semver.org/lang/fr/).
 
+## [Non publié]
+
+### Ajouté
+- **Conversion automatique en MP3 pour les téléchargements audio** : les téléchargements audio seuls (« Juste le son » et mode son seul du batch) sont désormais automatiquement convertis en `.mp3` haute qualité (`-x --audio-format mp3 --audio-quality 0` via yt-dlp / ffmpeg, avec conversion ffmpeg de secours).
+- Affichage explicite du format `.mp3` dans l'extension et l'application Desktop.
+
 ## [0.3.1] — 2026-09-22
 
 ### Corrigé

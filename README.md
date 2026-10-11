@@ -302,7 +302,7 @@ Host : `http://*/*`, `https://*/*`, `*://127.0.0.1:4567/*`
 3. Récupère les formats (`formats.list`, timeout ~45 s) : miniature, titre, durée
 4. Liste groupée :
    - **Avec son** (vidéo + audio)
-   - **Juste le son**
+   - **Juste le son** (conversion automatique en `.mp3`)
    - **Sans le son** (vidéo seule)
 5. Pré-sélection selon la pref Desktop synchronisée (`prefs.snapshot`) :
    - `best_image` → premier combo A+V

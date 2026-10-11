@@ -511,6 +511,46 @@ pub fn compress_to_target_size(
     Ok(final_path)
 }
 
+pub fn convert_audio_to_mp3(input_path: &Path) -> Result<PathBuf, String> {
+    if input_path
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.eq_ignore_ascii_case("mp3"))
+        .unwrap_or(false)
+    {
+        return Ok(input_path.to_path_buf());
+    }
+
+    let ffmpeg = resolve_binary_path("ffmpeg.exe")?;
+    let output_path = input_path.with_extension("mp3");
+
+    let mut cmd = Command::new(&ffmpeg);
+    cmd.arg("-y")
+        .arg("-i")
+        .arg(input_path)
+        .arg("-vn")
+        .arg("-c:a")
+        .arg("libmp3lame")
+        .arg("-q:a")
+        .arg("0")
+        .arg(&output_path);
+    hide_window(&mut cmd);
+
+    let output = cmd
+        .output()
+        .map_err(|e| format!("failed to convert audio to mp3 with ffmpeg: {e}"))?;
+    if !output.status.success() {
+        let stderr = decode_utf8(&output.stderr);
+        return Err(format!("ffmpeg mp3 conversion failed: {stderr}"));
+    }
+
+    if input_path.exists() && input_path != output_path {
+        let _ = std::fs::remove_file(input_path);
+    }
+
+    Ok(output_path)
+}
+
 pub struct DownloadRequest<'a> {
     pub url: &'a str,
     pub format_id: &'a str,
@@ -520,6 +560,7 @@ pub struct DownloadRequest<'a> {
     pub cookies_file: Option<&'a Path>,
     /// Extra CLI args (e.g. YouTube player_client fallback).
     pub extra_args: &'a [&'a str],
+    pub audio_only: bool,
 }
 
 pub fn download(req: DownloadRequest) -> Result<Child, String> {
@@ -535,7 +576,7 @@ pub fn download(req: DownloadRequest) -> Result<Child, String> {
     for arg in req.extra_args {
         command.arg(arg);
     }
-    let (_mode, bare_format) = crate::paths::decode_format_id(req.format_id);
+    let (hint, bare_format) = crate::paths::decode_format_id(req.format_id);
     let format_arg = if bare_format == "target_20mb" {
         "bv*[filesize_approx<=18M]+ba[filesize_approx<=2M]/b[filesize_approx<=20M]/bv*[height<=720]+ba/b[height<=720]/bv*+ba/b"
     } else {
@@ -549,6 +590,19 @@ pub fn download(req: DownloadRequest) -> Result<Child, String> {
         .arg("--newline")
         .arg("--ffmpeg-location")
         .arg(ffmpeg_dir);
+
+    let is_audio = req.audio_only
+        || hint == Some("son")
+        || crate::paths::download_mode(req.format_id, false, None).starts_with("son");
+
+    if is_audio {
+        command
+            .arg("-x")
+            .arg("--audio-format")
+            .arg("mp3")
+            .arg("--audio-quality")
+            .arg("0");
+    }
 
     if let Some((start, end)) = req.trim {
         // Re-encode at cut points so A/V stay in sync (avoids muted start with copy-cut).
@@ -792,8 +846,8 @@ fn curate_formats(raw: &[RawFormat]) -> Vec<VideoFormat> {
     } else {
         out.push(VideoFormat {
             format_id: crate::paths::encode_format_id("ba/b", false, true),
-            label: "Meilleur audio seul".to_string(),
-            ext: "m4a".to_string(),
+            label: "Meilleur audio seul (mp3)".to_string(),
+            ext: "mp3".to_string(),
             height: None,
             has_audio: true,
             has_video: false,
@@ -816,6 +870,7 @@ fn dedup_by_height(list: &mut Vec<&RawFormat>) {
 }
 
 fn to_video_format(f: &RawFormat, prefer_audio_label: bool) -> VideoFormat {
+    let is_audio_only = !f.has_video && f.has_audio;
     let label = if f.has_video && f.has_audio {
         match f.height {
             Some(h) => format!("{h}p {}", f.ext),
@@ -826,11 +881,17 @@ fn to_video_format(f: &RawFormat, prefer_audio_label: bool) -> VideoFormat {
             Some(h) => format!("{h}p {} (video only)", f.ext),
             None => format!("video {}", f.ext),
         }
-    } else if prefer_audio_label || f.has_audio {
+    } else if prefer_audio_label || is_audio_only {
         match f.abr {
-            Some(abr) if abr > 0.0 => format!("audio {abr:.0}kbps {}", f.ext),
-            _ => format!("audio {}", f.ext),
+            Some(abr) if abr > 0.0 => format!("audio {abr:.0}kbps mp3"),
+            _ => "audio mp3".to_string(),
         }
+    } else {
+        f.ext.clone()
+    };
+
+    let ext = if is_audio_only || prefer_audio_label {
+        "mp3".to_string()
     } else {
         f.ext.clone()
     };
@@ -838,7 +899,7 @@ fn to_video_format(f: &RawFormat, prefer_audio_label: bool) -> VideoFormat {
     VideoFormat {
         format_id: crate::paths::encode_format_id(&f.format_id, f.has_video, f.has_audio),
         label,
-        ext: f.ext.clone(),
+        ext,
         height: f.height,
         has_audio: f.has_audio,
         has_video: f.has_video,
@@ -903,5 +964,21 @@ mod tests {
         let stderr = "Input #0, mov,mp4...\n  Duration: 00:02:15.30, start: 0.000000, bitrate: 1240 kb/s\n";
         let d = parse_ffmpeg_duration(stderr).unwrap();
         assert!((d - 135.30).abs() < 0.001);
+    }
+
+    #[test]
+    fn audio_format_is_always_mp3() {
+        let raw = RawFormat {
+            format_id: "251".to_string(),
+            ext: "webm".to_string(),
+            height: None,
+            abr: Some(128.0),
+            has_audio: true,
+            has_video: false,
+        };
+        let vf = to_video_format(&raw, true);
+        assert_eq!(vf.ext, "mp3");
+        assert_eq!(vf.label, "audio 128kbps mp3");
+        assert!(vf.format_id.contains("son"));
     }
 }

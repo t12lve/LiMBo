@@ -423,6 +423,7 @@ impl JobRunner {
         let trim_secs = trim.map(|t| (t.start_sec, t.end_sec));
         let download_cookies_path = cookies_file.clone();
         let download_format_id = format_id.clone();
+        let is_audio = mode.starts_with("son");
         let result = tokio::task::spawn_blocking(move || {
             runner.run_download_process(
                 &job_id,
@@ -433,6 +434,7 @@ impl JobRunner {
                 download_browser.as_deref(),
                 download_cookies_path.as_deref(),
                 &download_extra_args,
+                is_audio,
             )
         })
         .await
@@ -454,6 +456,22 @@ impl JobRunner {
             Ok(()) => {
                 let mut output_path = crate::paths::resolve_output_file(&job_dir_path, &stem)
                     .map(|p| p.to_string_lossy().to_string());
+
+                if is_audio {
+                    if let Some(ref current_path_str) = output_path {
+                        let current_path = std::path::PathBuf::from(current_path_str);
+                        if current_path.is_file() {
+                            match ytdlp::convert_audio_to_mp3(&current_path) {
+                                Ok(new_path) => {
+                                    output_path = Some(new_path.to_string_lossy().to_string());
+                                }
+                                Err(err) => {
+                                    eprintln!("[LiMBo] mp3 conversion warning: {err}; keeping original file");
+                                }
+                            }
+                        }
+                    }
+                }
 
                 let (_prefix_hint, bare_fmt) = crate::paths::decode_format_id(&format_id);
                 if bare_fmt == "target_20mb" {
@@ -517,6 +535,7 @@ impl JobRunner {
         cookies_browser: Option<&str>,
         cookies_file: Option<&std::path::Path>,
         extra_args: &[String],
+        audio_only: bool,
     ) -> Result<(), String> {
         let extra_refs: Vec<&str> = extra_args.iter().map(String::as_str).collect();
         let (stdout, stderr) = {
@@ -536,6 +555,7 @@ impl JobRunner {
                 cookies_browser,
                 cookies_file,
                 extra_args: &extra_refs,
+                audio_only,
             })?;
             let stdout = child.stdout.take();
             let stderr = child.stderr.take();
@@ -612,6 +632,8 @@ impl JobRunner {
         }
 
         if line.contains("[Merger]") {
+            self.set_phase(id, JobPhase::Merging);
+        } else if line.contains("[ExtractAudio]") {
             self.set_phase(id, JobPhase::Merging);
         } else if has_trim && (line.contains("[VideoRemuxer]") || line.contains("ffmpeg")) {
             self.set_phase(id, JobPhase::Trimming);

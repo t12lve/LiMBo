@@ -254,7 +254,7 @@ export default function UrlBatch() {
                       checked={item.soundOnly}
                       onChange={(e) => updateItem(item.id, { soundOnly: e.target.checked })}
                     />
-                    Son seulement
+                    Son seulement (mp3)
                   </label>
                 </div>
               </li>

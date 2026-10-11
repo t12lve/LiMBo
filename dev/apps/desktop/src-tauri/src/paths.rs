@@ -200,6 +200,14 @@ pub fn resolve_output_file(job_dir: &Path, stem: &str) -> Option<PathBuf> {
             (len, p)
         })
         .collect();
+    if let Some((_, mp3_path)) = matches.iter().find(|(_, p)| {
+        p.extension()
+            .and_then(|e| e.to_str())
+            .map(|e| e.eq_ignore_ascii_case("mp3"))
+            .unwrap_or(false)
+    }) {
+        return Some(mp3_path.clone());
+    }
     matches.sort_by(|a, b| b.0.cmp(&a.0));
     matches.into_iter().next().map(|(_, p)| p)
 }

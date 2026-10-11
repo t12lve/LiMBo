@@ -18,7 +18,7 @@ function groupFormats(formats: VideoFormat[]): Group[] {
 
   return [
     { title: "Avec son", formats: withSound },
-    { title: "Juste le son", formats: audioOnly },
+    { title: "Juste le son (mp3)", formats: audioOnly },
     { title: "Sans le son", formats: videoOnly },
   ].filter((g) => g.formats.length > 0);
 }
@@ -82,8 +82,8 @@ export default function FormatList({
               hint={
                 group.title === "Avec son"
                   ? format.ext
-                  : group.title === "Juste le son"
-                    ? format.ext
+                  : group.title.startsWith("Juste le son")
+                    ? format.ext || "mp3"
                     : `${format.ext} · sans audio`
               }
             />
