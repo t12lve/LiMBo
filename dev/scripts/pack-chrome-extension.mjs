@@ -33,7 +33,10 @@ if (!existsSync(path.join(built, "manifest.json"))) {
   process.exit(1);
 }
 
-rmSync(outDir, { recursive: true, force: true, maxRetries: 8, retryDelay: 300 });
+mkdirSync(outDir, { recursive: true });
+try {
+  rmSync(packDir, { recursive: true, force: true, maxRetries: 8, retryDelay: 300 });
+} catch {}
 mkdirSync(packDir, { recursive: true });
 cpSync(built, packDir, { recursive: true });
 

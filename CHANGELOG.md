@@ -2,11 +2,12 @@
 
 Toutes les dates sont en UTC+2 (Europe/Paris). Le projet suit [SemVer](https://semver.org/lang/fr/).
 
-## [Non publié]
+## [0.3.2] — 2026-10-11
 
 ### Ajouté
 - **Conversion automatique en MP3 pour les téléchargements audio** : les téléchargements audio seuls (« Juste le son » et mode son seul du batch) sont désormais automatiquement convertis en `.mp3` haute qualité (`-x --audio-format mp3 --audio-quality 0` via yt-dlp / ffmpeg, avec conversion ffmpeg de secours).
 - Affichage explicite du format `.mp3` dans l'extension et l'application Desktop.
+- Version alignée **0.3.2** (Desktop, extension Chromium/Firefox, Premiere CEP, shared).
 
 ## [0.3.1] — 2026-09-22
 
@@ -61,6 +62,7 @@ Toutes les dates sont en UTC+2 (Europe/Paris). Le projet suit [SemVer](https://s
 - README produit complet
 - Première release GitHub (installeurs, portable, extension, Premiere)
 
+[0.3.2]: https://github.com/t12lve/LiMBo/releases/tag/v0.3.2
 [0.3.1]: https://github.com/t12lve/LiMBo/releases/tag/v0.3.1
 [0.3.0]: https://github.com/t12lve/LiMBo/releases/tag/v0.3.0
 [0.2.0]: https://github.com/t12lve/LiMBo/releases/tag/v0.2.0
