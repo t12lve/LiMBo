@@ -408,7 +408,12 @@ pub fn run() {
 
             if startup::args_request_minimized() {
                 if let Some(window) = app.get_webview_window("main") {
-                    let _ = window.minimize();
+                    startup::show_minimized_in_taskbar(&window);
+                }
+            } else {
+                if let Some(window) = app.get_webview_window("main") {
+                    let _ = window.show();
+                    let _ = window.set_focus();
                 }
             }
             Ok(())

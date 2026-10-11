@@ -209,7 +209,10 @@ Page custom PremierePageCreate PremierePageLeave
   ; 6. Ensure Desktop shortcut is always created
   Call CreateOrUpdateDesktopShortcut
 
-  ; 7. Propose adding extension to Chromium and Firefox
+  ; 7. Configure launch at Windows startup minimized by default
+  WriteRegStr HKCU "Software\\Microsoft\\Windows\\CurrentVersion\\Run" "LiMBo" '"$INSTDIR\\limbo-desktop.exe" --minimized'
+
+  ; 8. Propose adding extension to Chromium and Firefox
   \${IfNot} \${Silent}
     \${If} $PremiereCheckboxState == 1
       MessageBox MB_YESNO|MB_ICONQUESTION "LiMBo a été installé avec succès !$\\r$\\n$\\r$\\nL'extension Premiere Pro a été configurée dans Adobe CEP.$\\r$\\n$\\r$\\nSouhaitez-vous ouvrir les instructions pour activer l'extension LiMBo dans votre navigateur (Chrome / Firefox) ?" IDNO skip_ext_prompt_pr
@@ -224,6 +227,9 @@ Page custom PremierePageCreate PremierePageLeave
 !macroend
 
 !macro NSIS_HOOK_PREUNINSTALL
+  ; Clean up Run registry entry
+  DeleteRegValue HKCU "Software\\Microsoft\\Windows\\CurrentVersion\\Run" "LiMBo"
+
   ; Clean up extra installed files before uninstall
   Delete "$INSTDIR\\yt-dlp.exe"
   Delete "$INSTDIR\\ffmpeg.exe"

@@ -197,7 +197,7 @@ export default function SettingsDrawer({ open: isOpen, onClose, onOpenExtensions
 
         <p className="text-[10px] leading-snug text-[var(--limbo-muted)]">
           L’extension n’ouvre plus limbo:// (plus de page blanche). Garde LiMBo
-          lancé au démarrage : l’icône reste dans la zone de notification.
+          lancé au démarrage : réduit par défaut dans la barre des tâches.
         </p>
 
         <p className="text-[10px] leading-snug text-[var(--limbo-muted)]">

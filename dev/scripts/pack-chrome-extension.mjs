@@ -14,7 +14,8 @@ const root = path.resolve(import.meta.dirname, "..");
 const repo = path.resolve(root, "..");
 const built = path.join(repo, "prod", "extension");
 const outDir = path.join(repo, "prod", "chrome");
-const packDir = path.join(outDir, "LiMBo");
+const stagingDir = path.join(os.tmpdir(), "limbo-chrome-staging-" + Date.now());
+const packDir = path.join(stagingDir, "LiMBo");
 const zipPath = path.join(outDir, "LiMBo-chrome.zip");
 const crxPath = path.join(outDir, "LiMBo-chrome.crx");
 const pemPath = path.join(outDir, "LiMBo-chrome.pem");
@@ -34,9 +35,6 @@ if (!existsSync(path.join(built, "manifest.json"))) {
 }
 
 mkdirSync(outDir, { recursive: true });
-try {
-  rmSync(packDir, { recursive: true, force: true, maxRetries: 8, retryDelay: 300 });
-} catch {}
 mkdirSync(packDir, { recursive: true });
 cpSync(built, packDir, { recursive: true });
 
@@ -61,6 +59,7 @@ const chrome = findChrome();
 if (!chrome) {
   console.warn("pack-chrome: Chrome introuvable — zip OK, .crx non généré");
   console.log("Wrote", zipPath);
+  try { rmSync(stagingDir, { recursive: true, force: true }); } catch {}
   process.exit(0);
 }
 
@@ -76,16 +75,20 @@ if (pack.status !== 0 && pack.status !== null) {
   // Chrome --pack-extension often exits 0; treat missing crx as failure
 }
 
-const generatedCrx = path.join(outDir, "LiMBo.crx");
-const generatedPem = path.join(outDir, "LiMBo.pem");
+const generatedCrx = path.join(stagingDir, "LiMBo.crx");
+const generatedPem = path.join(stagingDir, "LiMBo.pem");
 
 if (existsSync(generatedCrx)) {
   if (existsSync(crxPath)) rmSync(crxPath, { force: true });
-  renameSync(generatedCrx, crxPath);
+  cpSync(generatedCrx, crxPath);
 }
 if (existsSync(generatedPem) && !existsSync(pemPath)) {
-  renameSync(generatedPem, pemPath);
+  cpSync(generatedPem, pemPath);
 }
+
+try {
+  rmSync(stagingDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+} catch {}
 
 if (!existsSync(crxPath)) {
   console.warn("pack-chrome: .crx non produit (Chrome a peut-être besoin d'une UI). Zip disponible.");

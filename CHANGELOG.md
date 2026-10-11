@@ -2,6 +2,13 @@
 
 Toutes les dates sont en UTC+2 (Europe/Paris). Le projet suit [SemVer](https://semver.org/lang/fr/).
 
+## [0.3.3] — 2026-10-11
+
+### Ajouté
+- **Lancement automatique Windows réduit dans la barre des tâches** : lors du lancement automatique au démarrage de Windows (`--minimized`), la fenêtre démarre directement réduite dans la barre des tâches (`SW_SHOWMINNOACTIVE` natif Win32, sans affichage intempestif sur le bureau ni vol de focus, fenêtre initialisée en arrière-plan `visible: false`).
+- **Configuration automatique du démarrage dans l'installeur** : l'installeur Windows configure désormais par défaut la clé de registre `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` avec `--minimized`, et le désinstalleur assure son nettoyage complet.
+- Version alignée **0.3.3** (Desktop, extension Chromium/Firefox, Premiere CEP, shared).
+
 ## [0.3.2] — 2026-10-11
 
 ### Ajouté
@@ -62,6 +69,7 @@ Toutes les dates sont en UTC+2 (Europe/Paris). Le projet suit [SemVer](https://s
 - README produit complet
 - Première release GitHub (installeurs, portable, extension, Premiere)
 
+[0.3.3]: https://github.com/t12lve/LiMBo/releases/tag/v0.3.3
 [0.3.2]: https://github.com/t12lve/LiMBo/releases/tag/v0.3.2
 [0.3.1]: https://github.com/t12lve/LiMBo/releases/tag/v0.3.1
 [0.3.0]: https://github.com/t12lve/LiMBo/releases/tag/v0.3.0

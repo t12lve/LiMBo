@@ -10,6 +10,30 @@ pub fn args_request_minimized() -> bool {
     std::env::args().any(|a| a == "--minimized")
 }
 
+#[cfg(windows)]
+extern "system" {
+    fn ShowWindow(hwnd: *mut std::ffi::c_void, nCmdShow: i32) -> i32;
+}
+
+#[cfg(windows)]
+const SW_SHOWMINNOACTIVE: i32 = 7;
+
+/// Shows the window directly minimized into the Windows taskbar without activating it or stealing focus.
+pub fn show_minimized_in_taskbar(window: &tauri::WebviewWindow) {
+    #[cfg(windows)]
+    {
+        if let Ok(hwnd) = window.hwnd() {
+            unsafe {
+                ShowWindow(hwnd.0 as _, SW_SHOWMINNOACTIVE);
+            }
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = window.minimize();
+    }
+}
+
 /// Enable or disable launching LiMBo at Windows logon (current user).
 pub fn set_launch_at_startup(enabled: bool) -> Result<(), String> {
     #[cfg(windows)]
