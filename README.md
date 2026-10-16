@@ -96,6 +96,12 @@ pnpm build
 Les artefacts Cargo Desktop sont redirigés hors Dropbox vers  
 `%LOCALAPPDATA%\limbo-desktop-cargo-target` (évite les verrous EPERM).
 
+Pour un `cargo test` / `cargo clippy` lancé **directement** depuis `src-tauri` (hors scripts), pointez `target/` vers ce même dossier via une jonction — sinon Cargo recrée `target/` dans Dropbox et les verrous EPERM reviennent :
+
+```bat
+mklink /J target "%LOCALAPPDATA%\limbo-desktop-cargo-target"
+```
+
 ---
 
 ## Installation & lancement
