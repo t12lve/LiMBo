@@ -1,7 +1,10 @@
 name: CI
 
 on:
+  # Les branches de travail sont couvertes par `pull_request` ; `push` est restreint à master
+  # pour qu'un push n'engendre pas deux runs identiques (push + pull_request).
   push:
+    branches: [master]
   pull_request:
 
 # One run per ref; a new push supersedes the previous one.
