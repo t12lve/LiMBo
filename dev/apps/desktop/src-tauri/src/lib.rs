@@ -1,3 +1,17 @@
+// Pre-existing clippy lint debt, acknowledged here so CI can run `clippy -- -D warnings` as a real
+// gate: any *new* lint outside this allow-list still fails the build. Tracked for incremental
+// cleanup (see the repo's improvement notes) rather than fixed all at once to keep diffs focused.
+#![allow(
+    clippy::too_many_arguments, // run_download_process mirrors the yt-dlp CLI's many params
+    clippy::result_large_err,   // `Result<_, String>` is the crate-wide error convention
+    clippy::doc_lazy_continuation, // module docs predate newer rustfmt doc-indent rules
+    clippy::if_same_then_else,  // intentional parallel branches (see user_errors)
+    clippy::ptr_arg,            // `&PathBuf` params to be narrowed to `&Path`
+    clippy::manual_find,        // hand-rolled iterator searches
+    clippy::redundant_pattern_matching, // `if let Ok(_) = …` idiom
+    clippy::unnecessary_sort_by // reverse sorts written as `sort_by(|a, b| b.k.cmp(&a.k))`
+)]
+
 mod browser_detect;
 mod config;
 mod job_runner;
@@ -291,18 +305,19 @@ fn open_extension_dir(browser: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn open_extension_guide() -> Result<(), String> {
+fn open_extension_guide(app: tauri::AppHandle) -> Result<(), String> {
+    use tauri_plugin_opener::OpenerExt;
+
     let paths = resolve_extension_paths();
-    if !paths.guide_path.is_empty() && std::path::Path::new(&paths.guide_path).exists() {
-        #[cfg(windows)]
-        {
-            let _ = std::process::Command::new("cmd")
-                .args(["/c", "start", "", &paths.guide_path])
-                .spawn();
-        }
-        return Ok(());
+    if paths.guide_path.is_empty() || !std::path::Path::new(&paths.guide_path).exists() {
+        return Err("Guide d'installation introuvable.".to_string());
     }
-    Err("Guide d'installation introuvable.".to_string())
+
+    // Open via the OS default handler through the opener plugin, NOT `cmd /c start` — the latter
+    // would let shell metacharacters in the path be interpreted.
+    app.opener()
+        .open_path(paths.guide_path, None::<&str>)
+        .map_err(|e| format!("Impossible d'ouvrir le guide d'installation : {e}"))
 }
 
 #[tauri::command]
@@ -364,7 +379,7 @@ pub fn run() {
 
             let config = config::load_or_init().expect("failed to load or init app config");
             if config.launch_at_startup {
-                if let Err(err) = startup::set_launch_at_startup(true) {
+                if let Err(err) = startup::sync_launch_at_startup_if_needed(true) {
                     eprintln!("failed to sync launch_at_startup: {err}");
                 }
             }
@@ -434,6 +449,15 @@ pub fn run() {
             open_extension_dir,
             open_extension_guide
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app_handle, event| {
+            // On shutdown, kill any in-flight yt-dlp/ffmpeg pair so it doesn't outlive LiMBo and
+            // keep the partial output file locked (tray "Quitter", Alt+F4 after ALLOW_EXIT, …).
+            if let tauri::RunEvent::Exit = event {
+                if let Some(runner) = app_handle.try_state::<Arc<JobRunner>>() {
+                    runner.shutdown();
+                }
+            }
+        });
 }

@@ -93,6 +93,11 @@ importers:
       vite:
         specifier: ^7.0.4
         version: 7.3.6(jiti@2.7.0)(lightningcss@1.32.0)
+      vitest:
+        specifier: ^2.1.8
+        version: 2.1.9(lightningcss@1.32.0)
+
+  apps/premiere: {}
 
   packages/shared:
     devDependencies:

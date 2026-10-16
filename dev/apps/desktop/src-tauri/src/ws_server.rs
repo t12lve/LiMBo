@@ -30,22 +30,65 @@
 //!   - `null` / `file://...` — Adobe CEP panels (Premiere Pro) load as file-backed HTML.
 //! Anything else (in particular any `https://` origin, i.e. a real website) is rejected, since a
 //! legitimate extension or local script never presents one of those.
+//!
+//! ## Hardening
+//!
+//! - At most [`MAX_CONNECTIONS`] sockets are handled at once; excess connections are dropped
+//!   immediately instead of each holding a task open forever.
+//! - The `hello` + `auth` handshake must complete within [`HANDSHAKE_TIMEOUT`], so an idle
+//!   connection can't squat a slot indefinitely.
+//! - Incoming frames/messages are capped ([`MAX_MESSAGE_SIZE`] / [`MAX_FRAME_SIZE`]) so a
+//!   hostile local client cannot force large allocations.
+//! - If the port can't be bound (another LiMBo instance still releasing it, or another app),
+//!   [`bind_with_retry`] retries with backoff and emits [`WS_STATUS_EVENT`] so the desktop UI
+//!   can warn the user instead of silently failing to accept the extension.
+//!
+//! ## The auth token is NOT a secret against a local attacker
+//!
+//! `hello.ok` deliberately returns the token to *any* client that sends `hello`, because the
+//! browser extension has no other bootstrap channel and the Node smoke scripts rely on the same
+//! flow. The token therefore only prevents *accidental* cross-talk between LiMBo installs — it is
+//! **not** an access boundary. The real boundary is the `Origin` policy above (which blocks web
+//! pages) plus the loopback-only bind. Turning the token into a true secret would require
+//! out-of-band provisioning (a native-messaging host or a manual pairing code), which is out of
+//! scope here — documenting the limitation is the honest alternative to over-trusting it.
 
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use futures_util::{SinkExt, StreamExt};
 use serde_json::{json, Value};
+use tauri::Emitter;
 use tokio::net::{TcpListener, TcpStream};
-use tokio::sync::broadcast;
+use tokio::sync::{broadcast, Semaphore};
 use tokio_tungstenite::tungstenite::handshake::server::{ErrorResponse, Request, Response};
 use tokio_tungstenite::tungstenite::http::StatusCode;
+use tokio_tungstenite::tungstenite::protocol::WebSocketConfig;
 use tokio_tungstenite::tungstenite::Message;
 
 use crate::config::AppConfig;
 use crate::job_runner::JobRunner;
 
 const BIND_ADDR: &str = "127.0.0.1:4567";
+
+/// Emitted to the desktop frontend when the local bridge could not be started, so the UI can
+/// surface a banner instead of the extension silently never connecting.
+pub const WS_STATUS_EVENT: &str = "ws-status";
+
+/// Maximum simultaneous WebSocket connections (extension + a few CEP panels / dev clients).
+const MAX_CONNECTIONS: usize = 8;
+/// Largest incoming WebSocket *message* we accept. Cookie jars (Netscape) are the biggest
+/// legitimate payload and stay well under this. Tungstenite's default is 64 MiB.
+const MAX_MESSAGE_SIZE: usize = 8 * 1024 * 1024;
+/// Largest single incoming *frame*. Must be ≤ [`MAX_MESSAGE_SIZE`]. Default is 16 MiB.
+const MAX_FRAME_SIZE: usize = 4 * 1024 * 1024;
+/// A client must finish `hello` + `auth` within this window or it is disconnected.
+const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
+/// Bind attempts before giving up (a previous LiMBo instance may still be releasing the port).
+const BIND_MAX_ATTEMPTS: u32 = 5;
+/// Linear backoff unit between bind attempts.
+const BIND_RETRY_BASE_MS: u64 = 400;
 
 /// Broadcast sender for job lifecycle events (`job.created`/`job.progress`/`job.done`/`job.error`).
 /// Held by [`JobRunner`] to publish to every authenticated client.
@@ -60,12 +103,12 @@ pub fn spawn(
     app_handle: tauri::AppHandle,
 ) -> Arc<JobRunner> {
     let (job_tx, _keep_alive_rx) = broadcast::channel::<String>(64);
-    let runner = JobRunner::new(job_tx.clone(), config, app_handle);
+    let runner = JobRunner::new(job_tx.clone(), config, app_handle.clone());
     let accept_tx = job_tx;
     let accept_runner = runner.clone();
 
     tauri::async_runtime::spawn(async move {
-        if let Err(err) = listen(token, accept_tx, accept_runner).await {
+        if let Err(err) = listen(token, accept_tx, accept_runner, app_handle).await {
             eprintln!("ws_server: fatal error: {err:?}");
         }
     });
@@ -73,22 +116,84 @@ pub fn spawn(
     runner
 }
 
-async fn listen(token: String, job_tx: JobEventSender, runner: Arc<JobRunner>) -> anyhow::Result<()> {
-    let listener = TcpListener::bind(BIND_ADDR).await?;
-    println!("ws_server: listening on {BIND_ADDR}");
+async fn listen(
+    token: String,
+    job_tx: JobEventSender,
+    runner: Arc<JobRunner>,
+    app_handle: tauri::AppHandle,
+) -> anyhow::Result<()> {
+    let listener = bind_with_retry(&app_handle).await?;
+    let connections = Arc::new(Semaphore::new(MAX_CONNECTIONS));
 
     loop {
         let (stream, addr) = listener.accept().await?;
+
+        // `try_acquire_owned` (non-blocking): if we're saturated, drop this connection instead of
+        // queuing an unbounded number of pending tasks.
+        let permit = match Arc::clone(&connections).try_acquire_owned() {
+            Ok(permit) => permit,
+            Err(_) => {
+                eprintln!(
+                    "ws_server: refusing {addr} — {MAX_CONNECTIONS} connections already open"
+                );
+                drop(stream);
+                continue;
+            }
+        };
+
         let token = token.clone();
         let job_rx = job_tx.subscribe();
         let runner = runner.clone();
 
         tauri::async_runtime::spawn(async move {
+            // Held for the connection's lifetime; released (freeing the slot) on drop.
+            let _permit = permit;
             if let Err(err) = handle_connection(stream, addr, token, job_rx, runner).await {
                 eprintln!("ws_server: connection {addr} closed with error: {err:?}");
             }
         });
     }
+}
+
+/// Binds the loopback listener, retrying with linear backoff. A previous LiMBo instance that is
+/// still shutting down (or another program) can keep the port busy for a moment; on definitive
+/// failure we emit [`WS_STATUS_EVENT`] so the UI can tell the user the local bridge is down.
+async fn bind_with_retry(app_handle: &tauri::AppHandle) -> anyhow::Result<TcpListener> {
+    let mut last_err: Option<std::io::Error> = None;
+
+    for attempt in 1..=BIND_MAX_ATTEMPTS {
+        match TcpListener::bind(BIND_ADDR).await {
+            Ok(listener) => {
+                println!("ws_server: listening on {BIND_ADDR}");
+                emit_ws_status(app_handle, true, None);
+                return Ok(listener);
+            }
+            Err(err) => {
+                eprintln!(
+                    "ws_server: bind attempt {attempt}/{BIND_MAX_ATTEMPTS} on {BIND_ADDR} failed: {err}"
+                );
+                last_err = Some(err);
+                if attempt < BIND_MAX_ATTEMPTS {
+                    let delay = BIND_RETRY_BASE_MS * u64::from(attempt);
+                    tokio::time::sleep(Duration::from_millis(delay)).await;
+                }
+            }
+        }
+    }
+
+    let message = last_err
+        .map(|e| e.to_string())
+        .unwrap_or_else(|| "unknown bind error".to_string());
+    emit_ws_status(app_handle, false, Some(message.clone()));
+    Err(anyhow::anyhow!("could not bind {BIND_ADDR}: {message}"))
+}
+
+/// Notifies the desktop UI that the local WS bridge is (un)available.
+fn emit_ws_status(app_handle: &tauri::AppHandle, available: bool, error: Option<String>) {
+    let _ = app_handle.emit(
+        WS_STATUS_EVENT,
+        json!({ "available": available, "error": error }),
+    );
 }
 
 async fn handle_connection(
@@ -98,32 +203,54 @@ async fn handle_connection(
     mut job_rx: broadcast::Receiver<String>,
     runner: Arc<JobRunner>,
 ) -> anyhow::Result<()> {
-    let ws_stream = tokio_tungstenite::accept_hdr_async(stream, check_origin).await?;
+    let ws_config = WebSocketConfig {
+        max_message_size: Some(MAX_MESSAGE_SIZE),
+        max_frame_size: Some(MAX_FRAME_SIZE),
+        ..Default::default()
+    };
+    let ws_stream =
+        tokio_tungstenite::accept_hdr_async_with_config(stream, check_origin, Some(ws_config))
+            .await?;
     println!("ws_server: client connected from {addr}");
     let (mut write, mut read) = ws_stream.split();
 
-    let Some(hello) = next_json(&mut read).await else {
-        return Ok(());
-    };
-    if msg_type(&hello) != Some("hello") {
-        return Ok(());
-    }
-    send_json(&mut write, json!({ "type": "hello.ok", "token": token })).await?;
+    // Bound the unauthenticated phase: a client that connects but never completes `hello`/`auth`
+    // would otherwise hold a connection slot (and a task) forever.
+    let handshake = async {
+        let Some(hello) = next_json(&mut read).await else {
+            return Ok::<bool, anyhow::Error>(false);
+        };
+        if msg_type(&hello) != Some("hello") {
+            return Ok(false);
+        }
+        send_json(&mut write, json!({ "type": "hello.ok", "token": token })).await?;
 
-    let Some(auth) = next_json(&mut read).await else {
-        return Ok(());
-    };
-    let provided_token = (msg_type(&auth) == Some("auth"))
-        .then(|| auth.get("token").and_then(Value::as_str))
-        .flatten();
+        let Some(auth) = next_json(&mut read).await else {
+            return Ok(false);
+        };
+        let provided_token = (msg_type(&auth) == Some("auth"))
+            .then(|| auth.get("token").and_then(Value::as_str))
+            .flatten();
 
-    if provided_token != Some(token.as_str()) {
-        send_json(
-            &mut write,
-            json!({ "type": "auth.fail", "error": "invalid or missing token" }),
-        )
-        .await?;
-        return Ok(());
+        if provided_token != Some(token.as_str()) {
+            send_json(
+                &mut write,
+                json!({ "type": "auth.fail", "error": "invalid or missing token" }),
+            )
+            .await?;
+            return Ok(false);
+        }
+        Ok(true)
+    };
+
+    match tokio::time::timeout(HANDSHAKE_TIMEOUT, handshake).await {
+        Ok(Ok(true)) => {}
+        Ok(Ok(false)) => return Ok(()),
+        Ok(Err(err)) => return Err(err),
+        Err(_) => {
+            eprintln!("ws_server: handshake timed out for {addr}");
+            return Ok(());
+        }
     }
 
     send_json(&mut write, json!({ "type": "auth.ok" })).await?;
@@ -164,7 +291,19 @@ async fn handle_connection(
                             break;
                         }
                     }
-                    Err(broadcast::error::RecvError::Lagged(_)) => continue,
+                    Err(broadcast::error::RecvError::Lagged(skipped)) => {
+                        // A slow client missed `skipped` job events (e.g. the MV3 service worker
+                        // was suspended mid-download). A bare `continue` would leave its UI stuck
+                        // on a stale phase (a `job.done` it never saw), so re-send a full snapshot.
+                        eprintln!(
+                            "ws_server: client lagged by {skipped} events — resyncing jobs.snapshot"
+                        );
+                        let snapshot =
+                            json!({ "type": "jobs.snapshot", "jobs": runner.snapshot() });
+                        if send_json(&mut write, snapshot).await.is_err() {
+                            break;
+                        }
+                    }
                     Err(broadcast::error::RecvError::Closed) => break,
                 }
             }

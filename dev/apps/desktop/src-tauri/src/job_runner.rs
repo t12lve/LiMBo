@@ -30,8 +30,9 @@ pub const JOB_UPDATED_EVENT: &str = "job-updated";
 /// Emitted when the queue becomes idle after at least one job finished in this cycle.
 pub const QUEUE_IDLE_EVENT: &str = "queue-idle";
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ts_rs::TS)]
 #[serde(rename_all = "snake_case")]
+#[ts(export)]
 pub enum JobPhase {
     Queued,
     FetchingMeta,
@@ -42,14 +43,16 @@ pub enum JobPhase {
     Error,
 }
 
-#[derive(Debug, Clone, Copy, Deserialize)]
+#[derive(Debug, Clone, Copy, Deserialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(export)]
 pub struct TrimRange {
     pub start_sec: f64,
     pub end_sec: f64,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ts_rs::TS)]
+#[ts(export, optional_fields)]
 pub struct JobSnapshot {
     pub id: String,
     pub url: String,
@@ -58,10 +61,13 @@ pub struct JobSnapshot {
     pub percent: f64,
     pub speed: String,
     pub eta: String,
+    /// Present only when `phase` is `error`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    /// Absolute path of the finished file — present only when `phase` is `done`.
     #[serde(rename = "outputPath", skip_serializing_if = "Option::is_none")]
     pub output_path: Option<String>,
+    /// Download mode used in the filename: `combo | son | video | *_trimmed`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub mode: Option<String>,
 }
@@ -247,6 +253,21 @@ impl JobRunner {
         }
     }
 
+    /// Kills the currently active child process tree, if any, and marks the active job as
+    /// cancelled. Called on app exit (`RunEvent::Exit`) so a yt-dlp/ffmpeg pair doesn't outlive
+    /// LiMBo, keep running invisibly, and hold the partial output file open.
+    ///
+    /// Best-effort and non-blocking: the dispatcher loop is torn down with the runtime, so the
+    /// authoritative `.part` cleanup performed by `run_job` may not run — `kill_process_tree`
+    /// still terminates yt-dlp/ffmpeg, which is the part that matters after exit.
+    pub fn shutdown(&self) {
+        let mut state = self.state.lock().unwrap();
+        if let Some(child) = state.active_child.as_mut() {
+            kill_process_tree(child);
+        }
+        state.active_cancelled = true;
+    }
+
     fn broadcast(&self, value: Value) {
         let _ = self.events.send(value.to_string());
     }
@@ -418,12 +439,13 @@ impl JobRunner {
 
         let runner = self.clone();
         let job_id = id.clone();
-        let download_url = url;
+        let download_url = url.clone();
         let download_template = output_template.clone();
         let trim_secs = trim.map(|t| (t.start_sec, t.end_sec));
         let download_cookies_path = cookies_file.clone();
         let download_format_id = format_id.clone();
         let is_audio = mode.starts_with("son");
+        let initial_args = download_extra_args.clone();
         let result = tokio::task::spawn_blocking(move || {
             runner.run_download_process(
                 &job_id,
@@ -433,7 +455,7 @@ impl JobRunner {
                 trim_secs,
                 download_browser.as_deref(),
                 download_cookies_path.as_deref(),
-                &download_extra_args,
+                &initial_args,
                 is_audio,
             )
         })
@@ -443,6 +465,43 @@ impl JobRunner {
         if let Some(path) = cookies_file {
             let _ = std::fs::remove_file(path);
         }
+
+        let is_youtube = url.contains("youtube.com") || url.contains("youtu.be");
+        let already_used_android = download_extra_args.iter().any(|a| a.contains("player_client=android"));
+        let result = if result.is_err() && is_youtube && !already_used_android && !self.is_active_cancelled() {
+            eprintln!(
+                "[LiMBo] download failed ({:?}) — retrying with youtube:player_client=android,tv",
+                result.as_ref().err()
+            );
+            cleanup_partial_files(&job_dir);
+            let runner_retry = self.clone();
+            let job_id_retry = id.clone();
+            let retry_url = url.clone();
+            let retry_fmt = format_id.clone();
+            let retry_tmpl = output_template.clone();
+            let mut retry_args = download_extra_args.clone();
+            retry_args.extend([
+                "--extractor-args".to_string(),
+                "youtube:player_client=android,tv".to_string(),
+            ]);
+            tokio::task::spawn_blocking(move || {
+                runner_retry.run_download_process(
+                    &job_id_retry,
+                    &retry_url,
+                    &retry_fmt,
+                    &retry_tmpl,
+                    trim_secs,
+                    None,
+                    None,
+                    &retry_args,
+                    is_audio,
+                )
+            })
+            .await
+            .unwrap_or_else(|join_err| Err(format!("internal error: {join_err}")))
+        } else {
+            result
+        };
 
         let cancelled = self.state.lock().unwrap().active_cancelled;
 

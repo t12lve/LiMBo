@@ -2,6 +2,7 @@ import { useState, type ReactNode } from "react";
 import SettingsDrawer from "./SettingsDrawer";
 import WindowControls from "./WindowControls";
 import ExtensionModal from "./ExtensionModal";
+import BridgeStatusBanner from "./BridgeStatusBanner";
 
 type Props = {
   children: ReactNode;
@@ -76,6 +77,8 @@ export default function AppShell({ children, jobCount = 0 }: Props) {
           <WindowControls />
         </div>
       </header>
+
+      <BridgeStatusBanner />
 
       <main className="relative z-10 flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-3 py-3">
         {children}
