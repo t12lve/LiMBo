@@ -14,7 +14,8 @@ use serde_json::Value;
 #[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct VideoFormat {
     #[serde(rename = "formatId")]
     pub format_id: String,

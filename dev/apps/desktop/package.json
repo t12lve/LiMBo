@@ -9,6 +9,7 @@
     "typecheck": "tsc --noEmit",
     "preview": "vite preview",
     "tauri": "node scripts/run-tauri.mjs",
+    "gen:types": "node scripts/gen-types.mjs",
     "build:prod": "node ../../scripts/build-desktop.mjs"
   },
   "dependencies": {

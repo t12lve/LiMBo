@@ -66,6 +66,19 @@ jobs:
       - name: Test
         run: cargo test
 
+      # `cargo test` above re-ran the ts-rs `#[ts(export)]` tests, regenerating the TypeScript
+      # bindings from the Rust types. `git status` (not `git diff`) so a newly *added* binding is
+      # caught too; any output means the committed bindings are stale.
+      - name: Verify generated TS bindings are committed
+        working-directory: ${{ github.workspace }}
+        shell: bash
+        run: |
+          if [ -n "$(git status --porcelain -- dev/packages/shared/src/generated)" ]; then
+            echo "::error::Generated TS bindings are stale. Run 'pnpm --filter @limbo/desktop gen:types' and commit the result."
+            git status --porcelain -- dev/packages/shared/src/generated
+            exit 1
+          fi
+
 # NOTE: `cargo fmt --check` is intentionally not enforced yet — the existing tree is not
 # rustfmt-clean, so gating on it would require an unrelated repo-wide reformat. Run `cargo fmt`
 # first (a dedicated commit), then enable it here.

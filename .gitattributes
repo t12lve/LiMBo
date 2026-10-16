@@ -1,0 +1,4 @@
+# ts-rs regenerates the shared bindings with LF endings. Force LF in the working tree on every
+# platform, otherwise Windows' autocrlf would rewrite them to CRLF and the CI drift check
+# (`git status` on the generated dir) would report a false "stale bindings" failure.
+dev/packages/shared/src/generated/** text eol=lf

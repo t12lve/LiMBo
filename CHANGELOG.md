@@ -2,6 +2,29 @@
 
 Toutes les dates sont en UTC+2 (Europe/Paris). Le projet suit [SemVer](https://semver.org/lang/fr/).
 
+## [Unreleased]
+
+### Sécurité
+- **Serveur WebSocket durci** : plafond de connexions simultanées, taille maximale des frames/messages, timeout de handshake, et bind avec retry + backoff. Si le port 4567 reste indisponible, l'app émet un événement `ws-status` et affiche un bandeau d'avertissement au lieu d'échouer silencieusement.
+- **Fermeture propre** : quitter LiMBo (tray « Quitter ») tue désormais l'arbre de process yt-dlp/ffmpeg en cours, au lieu de le laisser orphelin en gardant le fichier partiel verrouillé.
+- **Plus d'injection d'argument** : le guide d'installation s'ouvre via `tauri-plugin-opener` et non plus `cmd /c start`.
+- **Modèle de menace documenté** : `hello.ok` renvoie le token à tout client local — ce n'est donc *pas* une frontière d'accès ; la vraie barrière est le contrôle d'`Origin` (les pages web sont rejetées) plus le bind loopback.
+
+### Corrigé
+- **Client WS bloqué sur un état obsolète** : sur `Lagged` (client lent — service worker MV3 suspendu), le serveur renvoie un `jobs.snapshot` au lieu de perdre silencieusement `job.done`.
+- **Message d'erreur de timeout** du `ws-client` : l'événement `close` court-circuitait le rejet et masquait « timed out ».
+- `resolve_node_path()` mis en cache (`OnceLock`) — il était recalculé deux fois par invocation yt-dlp.
+- `pnpm --filter @limbo/shared build` (typecheck), cassé par l'inclusion des fichiers de test.
+
+### Ajouté
+- **Contrat TS généré depuis Rust** (`ts-rs`) : `JobPhase`, `JobSnapshot`, `TrimRange` et `VideoFormat` ne sont plus dupliqués à la main ; un contrôle CI échoue si les bindings commités sont périmés. Régénération : `pnpm --filter @limbo/desktop gen:types`.
+- **Tests extension** : vitest + 25 tests (`queue`, `export-cookies`, `ws-client`). Le fichier `popup-handlers.test.ts` existant n'était **jamais exécuté** (aucun script `test`).
+- **CI GitHub Actions** (`windows-latest`) : typecheck, `pnpm test`, `clippy -D warnings`, `cargo test`, et contrôle de dérive des bindings.
+
+### Notes techniques
+- `clippy -D warnings` est désormais une barrière CI : les lints pré-existants sont explicitement reconnus au niveau du crate (`lib.rs`), donc tout *nouveau* lint échoue.
+- `cargo fmt --check` n'est **pas** encore imposé (l'arbre existant n'est pas `rustfmt`-clean) — à activer après un reformat dédié.
+
 ## [0.3.3] — 2026-10-11
 
 ### Ajouté

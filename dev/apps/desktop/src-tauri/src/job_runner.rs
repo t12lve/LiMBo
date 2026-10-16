@@ -30,8 +30,9 @@ pub const JOB_UPDATED_EVENT: &str = "job-updated";
 /// Emitted when the queue becomes idle after at least one job finished in this cycle.
 pub const QUEUE_IDLE_EVENT: &str = "queue-idle";
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ts_rs::TS)]
 #[serde(rename_all = "snake_case")]
+#[ts(export)]
 pub enum JobPhase {
     Queued,
     FetchingMeta,
@@ -42,14 +43,16 @@ pub enum JobPhase {
     Error,
 }
 
-#[derive(Debug, Clone, Copy, Deserialize)]
+#[derive(Debug, Clone, Copy, Deserialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(export)]
 pub struct TrimRange {
     pub start_sec: f64,
     pub end_sec: f64,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ts_rs::TS)]
+#[ts(export, optional_fields)]
 pub struct JobSnapshot {
     pub id: String,
     pub url: String,
@@ -58,10 +61,13 @@ pub struct JobSnapshot {
     pub percent: f64,
     pub speed: String,
     pub eta: String,
+    /// Present only when `phase` is `error`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    /// Absolute path of the finished file — present only when `phase` is `done`.
     #[serde(rename = "outputPath", skip_serializing_if = "Option::is_none")]
     pub output_path: Option<String>,
+    /// Download mode used in the filename: `combo | son | video | *_trimmed`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub mode: Option<String>,
 }
