@@ -247,6 +247,21 @@ impl JobRunner {
         }
     }
 
+    /// Kills the currently active child process tree, if any, and marks the active job as
+    /// cancelled. Called on app exit (`RunEvent::Exit`) so a yt-dlp/ffmpeg pair doesn't outlive
+    /// LiMBo, keep running invisibly, and hold the partial output file open.
+    ///
+    /// Best-effort and non-blocking: the dispatcher loop is torn down with the runtime, so the
+    /// authoritative `.part` cleanup performed by `run_job` may not run — `kill_process_tree`
+    /// still terminates yt-dlp/ffmpeg, which is the part that matters after exit.
+    pub fn shutdown(&self) {
+        let mut state = self.state.lock().unwrap();
+        if let Some(child) = state.active_child.as_mut() {
+            kill_process_tree(child);
+        }
+        state.active_cancelled = true;
+    }
+
     fn broadcast(&self, value: Value) {
         let _ = self.events.send(value.to_string());
     }

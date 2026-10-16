@@ -1,0 +1,71 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+# One run per ref; a new push supersedes the previous one.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  js:
+    name: JS (typecheck + tests)
+    # Windows-only project (winreg, PowerShell build scripts, Tauri tray) — keep CI on Windows
+    # so it matches what actually ships.
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: dev
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+          cache-dependency-path: dev/pnpm-lock.yaml
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      # `-r <script>` skips packages that don't define it (e.g. @limbo/premiere).
+      - name: Typecheck
+        run: pnpm -r typecheck
+
+      - name: Test
+        run: pnpm -r test
+
+  rust:
+    name: Rust (clippy + tests)
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: dev/apps/desktop/src-tauri
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: dev/apps/desktop/src-tauri
+
+      # `-D warnings` is a real gate: pre-existing lint debt is acknowledged crate-wide in
+      # `lib.rs`, so any *new* clippy lint fails CI.
+      - name: Clippy
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: Test
+        run: cargo test
+
+# NOTE: `cargo fmt --check` is intentionally not enforced yet — the existing tree is not
+# rustfmt-clean, so gating on it would require an unrelated repo-wide reformat. Run `cargo fmt`
+# first (a dedicated commit), then enable it here.

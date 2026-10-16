@@ -6,6 +6,7 @@
 
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
+use std::sync::OnceLock;
 
 use serde::Serialize;
 use serde_json::Value;
@@ -71,7 +72,17 @@ fn resolve_binary_path(name: &str) -> Result<PathBuf, String> {
 }
 
 /// Locates a usable Node.js ≥20 for yt-dlp's YouTube JS challenges.
+///
+/// Cached for the whole process lifetime: `apply_common_args` calls this twice per yt-dlp
+/// invocation, and each *uncached* call re-scans `PATH` plus several disk locations (nvm,
+/// fnm, `%ProgramFiles%`…), which is wasted work on the hot path of every download and
+/// `formats.list`. Node's location does not change while LiMBo runs.
 fn resolve_node_path() -> Option<PathBuf> {
+    static CACHE: OnceLock<Option<PathBuf>> = OnceLock::new();
+    CACHE.get_or_init(resolve_node_path_uncached).clone()
+}
+
+fn resolve_node_path_uncached() -> Option<PathBuf> {
     let mut candidates: Vec<PathBuf> = Vec::new();
 
     if let Some(p) = std::env::var_os("NODE_PATH").map(PathBuf::from) {
@@ -244,6 +255,9 @@ pub struct VideoMeta {
     pub extractor: String,
 }
 
+/// Convenience wrapper returning only the [`VideoMeta`]. Kept as a small public helper even
+/// though the download path uses [`fetch_meta_resilient`] directly (hence the `dead_code` allow).
+#[allow(dead_code)]
 pub fn fetch_meta(
     url: &str,
     cookies_browser: Option<&str>,

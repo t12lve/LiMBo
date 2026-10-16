@@ -71,11 +71,14 @@ export function connectAndAuth(): Promise<void> {
     }
 
     timeoutId = setTimeout(() => {
-      ws.close();
+      // Settle *before* closing: `ws.close()` synchronously fires the `close` handler, which
+      // would otherwise win the race and surface "connection closed before auth.ok" instead of
+      // the meaningful timeout error below.
       settle(() => {
         logDesktopUnreachable();
         reject(new Error("connectAndAuth: timed out waiting for auth.ok"));
       });
+      ws.close();
     }, CONNECT_TIMEOUT_MS);
 
     ws.addEventListener("open", () => {
