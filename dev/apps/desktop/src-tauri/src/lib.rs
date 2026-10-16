@@ -364,7 +364,7 @@ pub fn run() {
 
             let config = config::load_or_init().expect("failed to load or init app config");
             if config.launch_at_startup {
-                if let Err(err) = startup::set_launch_at_startup(true) {
+                if let Err(err) = startup::sync_launch_at_startup_if_needed(true) {
                     eprintln!("failed to sync launch_at_startup: {err}");
                 }
             }

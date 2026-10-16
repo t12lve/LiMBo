@@ -9,6 +9,10 @@ Toutes les dates sont en UTC+2 (Europe/Paris). Le projet suit [SemVer](https://s
 - **Configuration automatique du démarrage dans l'installeur** : l'installeur Windows configure désormais par défaut la clé de registre `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` avec `--minimized`, et le désinstalleur assure son nettoyage complet.
 - Version alignée **0.3.3** (Desktop, extension Chromium/Firefox, Premiere CEP, shared).
 
+### Corrigé
+- **Sélection stricte de la version audio originale (anti-doublage / anti-traduction)** : élimination des pistes audio traduites ou doublées automatiquement (fonctionnalité multi-audio / AI auto-dubbing YouTube). Les formats curatés et téléchargés sélectionnent désormais toujours la piste audio originale (`format_note` original, `xtags` original, `language_preference > 0`) et excluent formellement les flux de doublage/traduction automatique (`dub`, `doublage`, `translated`, `description audio`).
+- **Élimination de la console DOS / terminal Windows au démarrage** : passage inconditionnel du sous-système Windows en mode GUI (`#![windows_subsystem = "windows"]` en debug et release) et détachement explicite via `FreeConsole()`, garantissant qu'aucune invite de commande / fenêtre de terminal (`ws_server`, etc.) n'apparaît ou ne reste ouverte au lancement de l'application ou au démarrage de Windows.
+
 ## [0.3.2] — 2026-10-11
 
 ### Ajouté

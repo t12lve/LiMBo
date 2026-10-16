@@ -418,12 +418,13 @@ impl JobRunner {
 
         let runner = self.clone();
         let job_id = id.clone();
-        let download_url = url;
+        let download_url = url.clone();
         let download_template = output_template.clone();
         let trim_secs = trim.map(|t| (t.start_sec, t.end_sec));
         let download_cookies_path = cookies_file.clone();
         let download_format_id = format_id.clone();
         let is_audio = mode.starts_with("son");
+        let initial_args = download_extra_args.clone();
         let result = tokio::task::spawn_blocking(move || {
             runner.run_download_process(
                 &job_id,
@@ -433,7 +434,7 @@ impl JobRunner {
                 trim_secs,
                 download_browser.as_deref(),
                 download_cookies_path.as_deref(),
-                &download_extra_args,
+                &initial_args,
                 is_audio,
             )
         })
@@ -443,6 +444,43 @@ impl JobRunner {
         if let Some(path) = cookies_file {
             let _ = std::fs::remove_file(path);
         }
+
+        let is_youtube = url.contains("youtube.com") || url.contains("youtu.be");
+        let already_used_android = download_extra_args.iter().any(|a| a.contains("player_client=android"));
+        let result = if result.is_err() && is_youtube && !already_used_android && !self.is_active_cancelled() {
+            eprintln!(
+                "[LiMBo] download failed ({:?}) — retrying with youtube:player_client=android,tv",
+                result.as_ref().err()
+            );
+            cleanup_partial_files(&job_dir);
+            let runner_retry = self.clone();
+            let job_id_retry = id.clone();
+            let retry_url = url.clone();
+            let retry_fmt = format_id.clone();
+            let retry_tmpl = output_template.clone();
+            let mut retry_args = download_extra_args.clone();
+            retry_args.extend([
+                "--extractor-args".to_string(),
+                "youtube:player_client=android,tv".to_string(),
+            ]);
+            tokio::task::spawn_blocking(move || {
+                runner_retry.run_download_process(
+                    &job_id_retry,
+                    &retry_url,
+                    &retry_fmt,
+                    &retry_tmpl,
+                    trim_secs,
+                    None,
+                    None,
+                    &retry_args,
+                    is_audio,
+                )
+            })
+            .await
+            .unwrap_or_else(|join_err| Err(format!("internal error: {join_err}")))
+        } else {
+            result
+        };
 
         let cancelled = self.state.lock().unwrap().active_cancelled;
 

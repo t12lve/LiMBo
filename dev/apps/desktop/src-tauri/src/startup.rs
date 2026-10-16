@@ -66,6 +66,42 @@ pub fn set_launch_at_startup(enabled: bool) -> Result<(), String> {
     }
 }
 
+/// Syncs the Run registry value on startup if enabled and not already configured.
+pub fn sync_launch_at_startup_if_needed(enabled: bool) -> Result<(), String> {
+    #[cfg(windows)]
+    {
+        use winreg::enums::{HKEY_CURRENT_USER, KEY_READ, KEY_SET_VALUE};
+        use winreg::RegKey;
+
+        let hkcu = RegKey::predef(HKEY_CURRENT_USER);
+        let (key, _) = hkcu
+            .create_subkey(RUN_SUBKEY)
+            .map_err(|e| format!("failed to open Run key: {e}"))?;
+
+        if enabled {
+            if let Ok(existing) = key.get_value::<String, _>(VALUE_NAME) {
+                if !existing.trim().is_empty() {
+                    return Ok(());
+                }
+            }
+            let exe = std::env::current_exe().map_err(|e| format!("current_exe: {e}"))?;
+            let value = format!("\"{}\" --minimized", path_as_string(&exe)?);
+            key.set_value(VALUE_NAME, &value)
+                .map_err(|e| format!("failed to set Run value: {e}"))?;
+        } else {
+            let _ = key.delete_value(VALUE_NAME);
+            let _ = KEY_READ;
+            let _ = KEY_SET_VALUE;
+        }
+        Ok(())
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = enabled;
+        Ok(())
+    }
+}
+
 #[cfg(windows)]
 fn path_as_string(path: &PathBuf) -> Result<String, String> {
     path.to_str()
