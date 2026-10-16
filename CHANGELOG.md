@@ -2,7 +2,7 @@
 
 Toutes les dates sont en UTC+2 (Europe/Paris). Le projet suit [SemVer](https://semver.org/lang/fr/).
 
-## [Unreleased]
+## [0.3.4] — 2026-10-16
 
 ### Sécurité
 - **Serveur WebSocket durci** : plafond de connexions simultanées, taille maximale des frames/messages, timeout de handshake, et bind avec retry + backoff. Si le port 4567 reste indisponible, l'app émet un événement `ws-status` et affiche un bandeau d'avertissement au lieu d'échouer silencieusement.
@@ -11,6 +11,11 @@ Toutes les dates sont en UTC+2 (Europe/Paris). Le projet suit [SemVer](https://s
 - **Modèle de menace documenté** : `hello.ok` renvoie le token à tout client local — ce n'est donc *pas* une frontière d'accès ; la vraie barrière est le contrôle d'`Origin` (les pages web sont rejetées) plus le bind loopback.
 
 ### Corrigé
+- **Sélection stricte de la piste audio originale (anti-doublage / anti-traduction)** : les formats curatés et téléchargés sélectionnent désormais toujours la piste audio originale (`format_note` original, `xtags` original, `language_preference > 0`) et excluent les flux de doublage/traduction automatique (`dub`, `doublage`, `translated`, `description audio`).
+- **Aucune console Windows au lancement** : sous-système GUI inconditionnel (`#![windows_subsystem = "windows"]` en debug et release) et détachement explicite via `FreeConsole()`, pour qu'aucune fenêtre de terminal (`ws_server`, …) n'apparaisse ou ne reste ouverte.
+- **Retry YouTube automatique** : si un téléchargement échoue (déchiffrement / signature), un second essai est tenté avec `--extractor-args youtube:player_client=android,tv`, après nettoyage des fichiers partiels — ignoré si la tâche est annulée ou si le client `android` était déjà utilisé.
+- **Démarrage automatique resynchronisé** : au lancement, la valeur `Run` du registre est (re)créée si l'option est active et absente, et supprimée sinon.
+- **Erreurs de cookies verrouillés** : détection élargie (messages FR « impossible de lire les cookies », « cookie(s) verrouillé(s) ») → bascule automatique vers un essai sans cookies.
 - **Client WS bloqué sur un état obsolète** : sur `Lagged` (client lent — service worker MV3 suspendu), le serveur renvoie un `jobs.snapshot` au lieu de perdre silencieusement `job.done`.
 - **Message d'erreur de timeout** du `ws-client` : l'événement `close` court-circuitait le rejet et masquait « timed out ».
 - `resolve_node_path()` mis en cache (`OnceLock`) — il était recalculé deux fois par invocation yt-dlp.
@@ -25,16 +30,15 @@ Toutes les dates sont en UTC+2 (Europe/Paris). Le projet suit [SemVer](https://s
 - `clippy -D warnings` est désormais une barrière CI : les lints pré-existants sont explicitement reconnus au niveau du crate (`lib.rs`), donc tout *nouveau* lint échoue.
 - `cargo fmt --check` n'est **pas** encore imposé (l'arbre existant n'est pas `rustfmt`-clean) — à activer après un reformat dédié.
 
+### Modifié
+- Version alignée **0.3.4** (Desktop, extension Chromium/Firefox, Premiere CEP, shared).
+
 ## [0.3.3] — 2026-10-11
 
 ### Ajouté
 - **Lancement automatique Windows réduit dans la barre des tâches** : lors du lancement automatique au démarrage de Windows (`--minimized`), la fenêtre démarre directement réduite dans la barre des tâches (`SW_SHOWMINNOACTIVE` natif Win32, sans affichage intempestif sur le bureau ni vol de focus, fenêtre initialisée en arrière-plan `visible: false`).
 - **Configuration automatique du démarrage dans l'installeur** : l'installeur Windows configure désormais par défaut la clé de registre `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` avec `--minimized`, et le désinstalleur assure son nettoyage complet.
 - Version alignée **0.3.3** (Desktop, extension Chromium/Firefox, Premiere CEP, shared).
-
-### Corrigé
-- **Sélection stricte de la version audio originale (anti-doublage / anti-traduction)** : élimination des pistes audio traduites ou doublées automatiquement (fonctionnalité multi-audio / AI auto-dubbing YouTube). Les formats curatés et téléchargés sélectionnent désormais toujours la piste audio originale (`format_note` original, `xtags` original, `language_preference > 0`) et excluent formellement les flux de doublage/traduction automatique (`dub`, `doublage`, `translated`, `description audio`).
-- **Élimination de la console DOS / terminal Windows au démarrage** : passage inconditionnel du sous-système Windows en mode GUI (`#![windows_subsystem = "windows"]` en debug et release) et détachement explicite via `FreeConsole()`, garantissant qu'aucune invite de commande / fenêtre de terminal (`ws_server`, etc.) n'apparaît ou ne reste ouverte au lancement de l'application ou au démarrage de Windows.
 
 ## [0.3.2] — 2026-10-11
 
@@ -96,6 +100,7 @@ Toutes les dates sont en UTC+2 (Europe/Paris). Le projet suit [SemVer](https://s
 - README produit complet
 - Première release GitHub (installeurs, portable, extension, Premiere)
 
+[0.3.4]: https://github.com/t12lve/LiMBo/releases/tag/v0.3.4
 [0.3.3]: https://github.com/t12lve/LiMBo/releases/tag/v0.3.3
 [0.3.2]: https://github.com/t12lve/LiMBo/releases/tag/v0.3.2
 [0.3.1]: https://github.com/t12lve/LiMBo/releases/tag/v0.3.1

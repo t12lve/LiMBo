@@ -433,5 +433,5 @@ Scripts utilitaires dans `dev/scripts/` :
 ## Licence / statut
 
 Projet open source en développement (`private: true` dans les packages npm).  
-Version courante **0.3.3** (Desktop · extension · Premiere · shared).  
+Version courante **0.3.4** (Desktop · extension · Premiere · shared).  
 Historique : [`CHANGELOG.md`](./CHANGELOG.md).
