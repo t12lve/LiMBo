@@ -141,6 +141,8 @@ pub fn is_recoverable_cookie_error(err: &str) -> bool {
         || lower.contains("could not find edge cookies")
         || lower.contains("could not find vivaldi cookies")
         || lower.contains("could not find brave cookies")
+        || lower.contains("impossible de lire les cookies")
+        || (lower.contains("cookie") && lower.contains("verrouill"))
 }
 
 /// YouTube player JS / nsig failures — may succeed with an alternate player client.

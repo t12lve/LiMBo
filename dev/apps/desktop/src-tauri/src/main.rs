@@ -1,7 +1,16 @@
-// Prevents additional console window on Windows in release, DO NOT REMOVE!!
-#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+// Prevents console window on Windows (in both debug and release builds)
+#![windows_subsystem = "windows"]
+
+#[cfg(windows)]
+extern "system" {
+    fn FreeConsole() -> i32;
+}
 
 fn main() {
+    #[cfg(windows)]
+    unsafe {
+        FreeConsole();
+    }
     #[cfg(windows)]
     {
         const ARGS: &str = "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection,AudioServiceSandbox,WASAPIRawAudioCapture --disable-gpu --disable-gpu-compositing --disable-audio-output --mute-audio";

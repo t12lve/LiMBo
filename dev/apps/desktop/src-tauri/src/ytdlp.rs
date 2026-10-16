@@ -185,6 +185,7 @@ fn apply_common_args(
     command.arg("--encoding").arg("utf-8");
     command.arg("--windows-filenames");
     command.arg("--no-playlist");
+    command.arg("--extractor-args").arg("youtube:skip=translated_subs");
 
     if let Some(node) = resolve_node_path() {
         let runtime = format!("node:{}", node.display());
@@ -409,7 +410,7 @@ fn format_ytdlp_failure(output: &std::process::Output) -> String {
     let clipped: String = concise.chars().take(280).collect();
     let raw = format!("yt-dlp exited with {}: {clipped}", output.status);
     eprintln!("[LiMBo] yt-dlp failure (raw): {raw}");
-    humanize_ytdlp_error(&raw)
+    raw
 }
 
 fn seconds_to_section(sec: f64) -> String {
@@ -578,6 +579,25 @@ pub struct DownloadRequest<'a> {
     pub audio_only: bool,
 }
 
+/// Expands format selectors so yt-dlp always prioritizes the original audio track
+/// and avoids auto-dubbed/translated audio streams.
+pub fn expand_format_selector(bare_format: &str) -> String {
+    if bare_format == "target_20mb" {
+        return "bv*[filesize_approx<=18M]+ba[format_note~='(?i)original'][filesize_approx<=2M]/bv*[filesize_approx<=18M]+ba[format_note!~='(?i)dub|doubl|translat'][filesize_approx<=2M]/bv*[filesize_approx<=18M]+ba[filesize_approx<=2M]/b[filesize_approx<=20M]/bv*[height<=720]+ba[format_note~='(?i)original']/bv*[height<=720]+ba[format_note!~='(?i)dub|doubl|translat']/bv*[height<=720]+ba/b[height<=720]/bv*+ba[format_note~='(?i)original']/bv*+ba[format_note!~='(?i)dub|doubl|translat']/bv*+ba/b".to_string();
+    }
+    if bare_format == "bv*+ba/b" {
+        return "bv*+ba[format_note~='(?i)original']/bv*+ba[format_note!~='(?i)dub|doubl|translat']/bv*+ba/b".to_string();
+    }
+    if bare_format == "ba/b" {
+        return "ba[format_note~='(?i)original']/ba[format_note!~='(?i)dub|doubl|translat']/ba/b".to_string();
+    }
+    if bare_format.ends_with("+ba/b") {
+        let prefix = bare_format.trim_end_matches("+ba/b");
+        return format!("{prefix}+ba[format_note~='(?i)original']/{prefix}+ba[format_note!~='(?i)dub|doubl|translat']/{prefix}+ba/b");
+    }
+    bare_format.to_string()
+}
+
 pub fn download(req: DownloadRequest) -> Result<Child, String> {
     let ytdlp = resolve_binary_path("yt-dlp.exe")?;
     let ffmpeg = resolve_binary_path("ffmpeg.exe")?;
@@ -592,14 +612,10 @@ pub fn download(req: DownloadRequest) -> Result<Child, String> {
         command.arg(arg);
     }
     let (hint, bare_format) = crate::paths::decode_format_id(req.format_id);
-    let format_arg = if bare_format == "target_20mb" {
-        "bv*[filesize_approx<=18M]+ba[filesize_approx<=2M]/b[filesize_approx<=20M]/bv*[height<=720]+ba/b[height<=720]/bv*+ba/b"
-    } else {
-        bare_format
-    };
+    let format_arg = expand_format_selector(bare_format);
     command
         .arg("-f")
-        .arg(format_arg)
+        .arg(&format_arg)
         .arg("-o")
         .arg(req.output_template)
         .arg("--newline")
@@ -652,7 +668,15 @@ pub fn list_formats(
                 && is_recoverable_cookie_error(&err) =>
         {
             eprintln!("ytdlp: cookie lock on formats.list — retry without browser cookies");
-            list_formats_once(url, None, None, &[])
+            match list_formats_once(url, None, None, &[]) {
+                Ok(payload) => Ok(payload),
+                Err(err2) if is_youtube_decrypt_error(&err2) => {
+                    eprintln!("ytdlp: decrypt on formats.list fallback — retry android/tv client");
+                    let extras = ["--extractor-args", "youtube:player_client=android,tv"];
+                    list_formats_once(url, None, None, &extras)
+                }
+                Err(err2) => Err(err2),
+            }
         }
         Err(err) if is_youtube_decrypt_error(&err) => {
             eprintln!("ytdlp: decrypt on formats.list — retry android/tv client");
@@ -697,7 +721,7 @@ fn list_formats_once(
     parse_formats_payload(&raw)
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 struct RawFormat {
     format_id: String,
     ext: String,
@@ -705,6 +729,9 @@ struct RawFormat {
     abr: Option<f64>,
     has_audio: bool,
     has_video: bool,
+    is_original: bool,
+    is_dubbed: bool,
+    language_preference: Option<i64>,
 }
 
 fn parse_formats_payload(raw: &Value) -> Result<FormatsPayload, String> {
@@ -758,9 +785,28 @@ fn curate_formats(raw: &[RawFormat]) -> Vec<VideoFormat> {
         .filter(|f| f.has_audio && !f.has_video)
         .collect();
 
+    // Prioritize original audio and strictly eliminate translations/dubs:
+    // If any audio or progressive stream is identified as original, keep only original streams.
+    // Otherwise, strip out any stream marked as dubbed/translated.
+    let any_original = raw.iter().any(|f| f.has_audio && f.is_original);
+    if any_original {
+        progressive.retain(|f| f.is_original);
+        audio_only.retain(|f| f.is_original);
+    } else {
+        progressive.retain(|f| !f.is_dubbed);
+        audio_only.retain(|f| !f.is_dubbed);
+    }
+
     progressive.sort_by(|a, b| b.height.unwrap_or(-1).cmp(&a.height.unwrap_or(-1)));
     video_only.sort_by(|a, b| b.height.unwrap_or(-1).cmp(&a.height.unwrap_or(-1)));
     audio_only.sort_by(|a, b| {
+        let lp_cmp = b
+            .language_preference
+            .unwrap_or(0)
+            .cmp(&a.language_preference.unwrap_or(0));
+        if lp_cmp != std::cmp::Ordering::Equal {
+            return lp_cmp;
+        }
         b.abr
             .unwrap_or(0.0)
             .partial_cmp(&a.abr.unwrap_or(0.0))
@@ -818,10 +864,15 @@ fn curate_formats(raw: &[RawFormat]) -> Vec<VideoFormat> {
         for v in video_only.iter().take(3) {
             let (format_id, label) = match v.height {
                 Some(h) => (
-                    format!("bv*[height<={h}]+ba/b"),
+                    format!(
+                        "bv*[height<={h}]+ba[format_note~='(?i)original']/bv*[height<={h}]+ba[format_note!~='(?i)dub|doubl|translat']/bv*[height<={h}]+ba/b"
+                    ),
                     format!("{h}p avec son"),
                 ),
-                None => ("bv*+ba/b".to_string(), "Meilleure qualité avec son".to_string()),
+                None => (
+                    "bv*+ba[format_note~='(?i)original']/bv*+ba[format_note!~='(?i)dub|doubl|translat']/bv*+ba/b".to_string(),
+                    "Meilleure qualité avec son".to_string(),
+                ),
             };
             with_sound.push(VideoFormat {
                 format_id: crate::paths::encode_format_id(&format_id, true, true),
@@ -836,7 +887,11 @@ fn curate_formats(raw: &[RawFormat]) -> Vec<VideoFormat> {
 
     if with_sound.is_empty() {
         with_sound.push(VideoFormat {
-            format_id: crate::paths::encode_format_id("bv*+ba/b", true, true),
+            format_id: crate::paths::encode_format_id(
+                "bv*+ba[format_note~='(?i)original']/bv*+ba[format_note!~='(?i)dub|doubl|translat']/bv*+ba/b",
+                true,
+                true,
+            ),
             label: "Meilleure qualité avec son".to_string(),
             ext: "mp4".to_string(),
             height: None,
@@ -860,7 +915,11 @@ fn curate_formats(raw: &[RawFormat]) -> Vec<VideoFormat> {
         out.push(to_video_format(audio, true));
     } else {
         out.push(VideoFormat {
-            format_id: crate::paths::encode_format_id("ba/b", false, true),
+            format_id: crate::paths::encode_format_id(
+                "ba[format_note~='(?i)original']/ba[format_note!~='(?i)dub|doubl|translat']/ba/b",
+                false,
+                true,
+            ),
             label: "Meilleur audio seul (mp3)".to_string(),
             ext: "mp3".to_string(),
             height: None,
@@ -942,6 +1001,33 @@ fn raw_format_from_value(value: &Value) -> Option<RawFormat> {
         return None;
     }
 
+    let format_note = value
+        .get("format_note")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_ascii_lowercase();
+
+    let xtags = value
+        .get("xtags")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_ascii_lowercase();
+
+    let language_preference = value.get("language_preference").and_then(Value::as_i64);
+
+    let is_original = format_note.contains("original")
+        || xtags.contains("acont=original")
+        || language_preference.map(|lp| lp > 0).unwrap_or(false);
+
+    let is_dubbed = format_note.contains("dub")
+        || format_note.contains("doubl")
+        || format_note.contains("translat")
+        || format_note.contains("traduct")
+        || format_note.contains("description")
+        || format_note.contains("descriptive")
+        || xtags.contains("acont=dubbed")
+        || language_preference.map(|lp| lp < -1).unwrap_or(false);
+
     Some(RawFormat {
         format_id,
         ext,
@@ -949,6 +1035,9 @@ fn raw_format_from_value(value: &Value) -> Option<RawFormat> {
         abr: value.get("abr").and_then(Value::as_f64),
         has_audio,
         has_video,
+        is_original,
+        is_dubbed,
+        language_preference,
     })
 }
 
@@ -990,10 +1079,96 @@ mod tests {
             abr: Some(128.0),
             has_audio: true,
             has_video: false,
+            is_original: false,
+            is_dubbed: false,
+            language_preference: None,
         };
         let vf = to_video_format(&raw, true);
         assert_eq!(vf.ext, "mp3");
         assert_eq!(vf.label, "audio 128kbps mp3");
         assert!(vf.format_id.contains("son"));
+    }
+
+    #[test]
+    fn curate_formats_prefers_original_audio_over_translations() {
+        let raw = vec![
+            RawFormat {
+                format_id: "137".to_string(),
+                ext: "mp4".to_string(),
+                height: Some(1080),
+                abr: None,
+                has_audio: false,
+                has_video: true,
+                is_original: false,
+                is_dubbed: false,
+                language_preference: None,
+            },
+            RawFormat {
+                format_id: "251-fr".to_string(),
+                ext: "webm".to_string(),
+                height: None,
+                abr: Some(128.0),
+                has_audio: true,
+                has_video: false,
+                is_original: false,
+                is_dubbed: true,
+                language_preference: Some(-10),
+            },
+            RawFormat {
+                format_id: "251-en".to_string(),
+                ext: "webm".to_string(),
+                height: None,
+                abr: Some(128.0),
+                has_audio: true,
+                has_video: false,
+                is_original: true,
+                is_dubbed: false,
+                language_preference: Some(10),
+            },
+            RawFormat {
+                format_id: "251-es".to_string(),
+                ext: "webm".to_string(),
+                height: None,
+                abr: Some(128.0),
+                has_audio: true,
+                has_video: false,
+                is_original: false,
+                is_dubbed: true,
+                language_preference: Some(-10),
+            },
+        ];
+
+        let curated = curate_formats(&raw);
+
+        // 1080p video must be paired with original audio 251-en, never 251-fr or 251-es
+        let combo_1080 = curated.iter().find(|f| f.height == Some(1080)).unwrap();
+        assert!(
+            combo_1080.format_id.contains("251-en"),
+            "expected 1080p to be merged with 251-en, got {}",
+            combo_1080.format_id
+        );
+        assert!(!combo_1080.format_id.contains("251-fr"));
+
+        // Audio-only option must also be 251-en
+        let audio_only = curated.iter().find(|f| !f.has_video && f.has_audio).unwrap();
+        assert!(
+            audio_only.format_id.contains("251-en"),
+            "expected audio-only format to be 251-en, got {}",
+            audio_only.format_id
+        );
+        assert!(!audio_only.format_id.contains("251-fr"));
+    }
+
+    #[test]
+    fn expand_format_selector_injects_original_preference() {
+        let expanded = expand_format_selector("bv*+ba/b");
+        assert!(expanded.contains("format_note~='(?i)original'"));
+        assert!(expanded.contains("format_note!~='(?i)dub|doubl|translat'"));
+
+        let expanded_audio = expand_format_selector("ba/b");
+        assert!(expanded_audio.contains("format_note~='(?i)original'"));
+
+        let pass_through = expand_format_selector("137+251");
+        assert_eq!(pass_through, "137+251");
     }
 }
